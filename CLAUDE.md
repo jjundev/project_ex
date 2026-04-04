@@ -4,8 +4,34 @@
 교재 스캔본, 강의노트, 실험 영상 STT를 기반으로 예비보고서/결과보고서를 자동 생성한다.
 
 ## 사용 가능 커맨드
-- `/pre-report` : 예비보고서 생성
-- `/result-report` : 결과보고서 생성 (예비보고서 선행 필요)
+
+```bash
+# 전체 파이프라인 (예비 → 결과)
+python harness.py
+
+# 예비보고서만 (GAN 루프 포함)
+python harness.py --to pre-reviewer
+
+# 결과보고서만 (예비보고서 선행 필요)
+python harness.py --from result-generator
+
+# 완전 자동 실행 (인간 게이트 없음)
+python harness.py --auto
+
+# GAN 루프 최대 횟수 지정
+python harness.py --to pre-reviewer --max-rounds 2
+
+# 실행 경로 미리보기 (실제 실행 안 함)
+python harness.py --dry-run
+```
+
+### 파이프라인 역할 순서
+`pre-generator` → `pre-reviewer` → `result-generator` → `result-reviewer`
+
+- **pre-generator**: 교재/강의노트/STT로 예비보고서 생성 (Opus)
+- **pre-reviewer**: KVL/KCL 검증 — `pre-generator`와 GAN 루프 (Sonnet)
+- **result-generator**: 예비보고서 + 측정값으로 결과보고서 생성 (Opus)
+- **result-reviewer**: 오차율 계산 검증 (Sonnet)
 
 ## 디렉토리 구조
 - `docx/` : 입력 자료
