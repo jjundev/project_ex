@@ -46,11 +46,6 @@ ROLE_MODEL = {
     "result-generator": "Opus",
     "result-reviewer":  "Sonnet",
 }
-GATE_MSG = {
-    "pre-reviewer":    "예비보고서 검토가 완료되었습니다.\n계속 진행하시겠습니까?",
-    "result-reviewer": "결과보고서 검토가 완료되었습니다.\n배포를 진행하시겠습니까?",
-}
-
 ANSI = re.compile(r"\033\[[0-9;]*m")
 
 # ---------------------------------------------------------------------------
@@ -84,11 +79,9 @@ class _AppState:
             self._stream_done += 1
             if self._stream_done >= 2:
                 self._stream_done = 0
-                self._listeners  # keep reference
-        if self._stream_done == 0:          # both done
-            code = self.proc.poll() if self.proc else -1
-            self.broadcast({"type": "done", "code": code})
-            self.broadcast({"type": "running", "value": False})
+                code = self.proc.poll() if self.proc else -1
+                self.broadcast({"type": "done", "code": code})
+                self.broadcast({"type": "running", "value": False})
 
 state = _AppState()
 
@@ -118,7 +111,6 @@ def _build_html() -> str:
         </div>''')
 
     roles_json = json.dumps(ROLE_ORDER, ensure_ascii=False)
-    gate_json  = json.dumps(GATE_MSG,   ensure_ascii=False)
 
     return f"""<!DOCTYPE html>
 <html lang="ko">
@@ -192,13 +184,7 @@ input[type=number]:focus{{border-color:var(--blue)}}
       font-family:'Menlo','Consolas',monospace;font-size:12px;line-height:1.7;
       color:#333D4B;height:340px;overflow-y:auto;white-space:pre-wrap;word-break:break-word}}
 .li{{color:#3182F6}} .le{{color:#F04452}} .lg{{color:#00B493}}
-.lgt{{color:#FF6B00}} .ld{{color:#8B95A1}}
-#gate{{display:none}}
-#gate.show{{display:block}}
-.gate-lbl{{font-size:11px;font-weight:800;color:var(--sub);
-           text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}}
-.gate-msg{{font-size:15px;color:var(--text);white-space:pre-line;margin-bottom:18px;line-height:1.6}}
-.gate-btns{{display:flex;gap:10px}}
+.ld{{color:#8B95A1}}
 </style>
 </head>
 <body>
@@ -219,7 +205,6 @@ input[type=number]:focus{{border-color:var(--blue)}}
       <hr>
       <div class="field-label">옵션</div>
       <div class="opts-row" style="margin-top:10px">
-        <button class="toggle" id="auto-btn" onclick="toggleAuto()">자동 실행 &nbsp;OFF</button>
         <div class="num-wrap">
           <label>GAN 최대</label>
           <input type="number" id="rounds" value="3" min="1" max="10">
@@ -247,30 +232,11 @@ input[type=number]:focus{{border-color:var(--blue)}}
     <div id="log"></div>
   </div>
 
-  <div class="sec" id="gate">
-    <div class="card">
-      <div class="gate-lbl">검토 게이트</div>
-      <div class="gate-msg" id="gate-msg"></div>
-      <div class="gate-btns">
-        <button class="btn btn-p" onclick="answerGate('y')">계속 진행</button>
-        <button class="btn btn-d" onclick="answerGate('N')">중단</button>
-      </div>
-    </div>
-  </div>
 </div>
 
 <script>
 const ROLES   = {roles_json};
-const GATE_MESSAGES = {gate_json};
-let autoMode = false;
 let es = null;
-
-function toggleAuto() {{
-  autoMode = !autoMode;
-  const b = document.getElementById('auto-btn');
-  b.textContent = autoMode ? '자동 실행  ON' : '자동 실행  OFF';
-  b.classList.toggle('on', autoMode);
-}}
 
 function setRunning(v) {{
   document.getElementById('start-btn').disabled = v;
@@ -285,7 +251,7 @@ function setStage(role, state) {{
 
 function resetStages() {{ ROLES.forEach(r => setStage(r, 'idle')); }}
 
-const TAG_CLASS = {{info:'li', error:'le', gan:'lg', gate:'lgt', dim:'ld'}};
+const TAG_CLASS = {{info:'li', error:'le', gan:'lg', dim:'ld'}};
 function appendLog(text, tag) {{
   const log = document.getElementById('log');
   const s = document.createElement('span');
@@ -297,14 +263,6 @@ function appendLog(text, tag) {{
 
 function clearLog() {{ document.getElementById('log').innerHTML = ''; }}
 
-function showGate(role) {{
-  document.getElementById('gate-msg').textContent =
-    GATE_MESSAGES[role] || role + ' 완료. 계속 진행하시겠습니까?';
-  document.getElementById('gate').classList.add('show');
-}}
-
-function hideGate() {{ document.getElementById('gate').classList.remove('show'); }}
-
 function connectSSE() {{
   if (es) {{ es.close(); }}
   es = new EventSource('/events');
@@ -312,9 +270,8 @@ function connectSSE() {{
     const m = JSON.parse(e.data);
     if      (m.type === 'log')     appendLog(m.text, m.tag);
     else if (m.type === 'stage')   setStage(m.role, m.state);
-    else if (m.type === 'gate')    showGate(m.role);
     else if (m.type === 'running') setRunning(m.value);
-    else if (m.type === 'clear')   {{ clearLog(); resetStages(); hideGate(); }}
+    else if (m.type === 'clear')   {{ clearLog(); resetStages(); }}
     else if (m.type === 'done')    setRunning(false);
   }};
   es.onerror = () => setTimeout(connectSSE, 2000);
@@ -330,7 +287,6 @@ async function doStart() {{
   await post('/start', {{
     from: document.getElementById('from').value,
     to:   document.getElementById('to').value,
-    auto: autoMode,
     maxRounds: +document.getElementById('rounds').value,
   }});
 }}
@@ -338,17 +294,11 @@ async function doStart() {{
 async function doStop() {{ await post('/stop'); }}
 
 async function doPreview() {{
-  clearLog(); resetStages(); hideGate();
+  clearLog(); resetStages();
   const r = await fetch('/preview?from=' + document.getElementById('from').value
     + '&to=' + document.getElementById('to').value
     + '&rounds=' + document.getElementById('rounds').value);
   appendLog(await r.text(), 'dim');
-}}
-
-async function answerGate(answer) {{
-  hideGate();
-  appendLog('[gate] ' + (answer==='y' ? '계속 진행' : '중단') + '\\n\\n', 'gate');
-  await post('/gate', {{answer}});
 }}
 
 function updateRange() {{
@@ -395,8 +345,6 @@ class Handler(BaseHTTPRequestHandler):
             self._start(body)
         elif path == "/stop":
             self._stop()
-        elif path == "/gate":
-            self._gate(body)
         else:
             self.send_error(404)
 
@@ -461,14 +409,11 @@ class Handler(BaseHTTPRequestHandler):
 
         from_role  = body.get("from",      ROLE_ORDER[0])
         to_role    = body.get("to",        ROLE_ORDER[-1])
-        auto       = body.get("auto",      False)
         max_rounds = body.get("maxRounds", 3)
 
         cmd = [PYTHON, str(HARNESS),
                "--from", from_role, "--to", to_role,
                "--max-rounds", str(max_rounds)]
-        if auto:
-            cmd.append("--auto")
 
         state.broadcast({"type": "clear"})
         state.broadcast({"type": "log", "text": f"$ {' '.join(cmd[2:])}\n\n", "tag": "dim"})
@@ -476,7 +421,7 @@ class Handler(BaseHTTPRequestHandler):
         state._stream_done = 0
         state.proc = subprocess.Popen(
             cmd,
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, bufsize=1, cwd=str(PROJECT_DIR),
         )
         state.broadcast({"type": "running", "value": True})
@@ -491,16 +436,6 @@ class Handler(BaseHTTPRequestHandler):
     def _stop(self) -> None:
         if state.proc and state.proc.poll() is None:
             state.proc.terminate()
-        self._json({"ok": True})
-
-    def _gate(self, body: dict) -> None:
-        answer = body.get("answer", "N")
-        if state.proc and state.proc.stdin:
-            try:
-                state.proc.stdin.write(answer + "\n")
-                state.proc.stdin.flush()
-            except BrokenPipeError:
-                pass
         self._json({"ok": True})
 
     # ── 공통 ────────────────────────────────────────────────────────────────
@@ -534,19 +469,11 @@ def _reader(stream, name: str) -> None:
             if not clean:
                 continue
 
-            # Gate sentinel
-            if clean.startswith("__GATE__ "):
-                role = clean.split(" ", 1)[1].strip()
-                state.broadcast({"type": "gate", "role": role})
-                continue
-
             is_err = (name == "err")
             if is_err or ("✗" in clean or ("FAIL" in clean and "[harness]" in clean)):
                 tag = "error"
             elif "── GAN 라운드" in clean:
                 tag = "gan"
-            elif "[gate]" in clean:
-                tag = "gate"
             elif "[harness]" in clean:
                 tag = "info"
             else:
@@ -578,8 +505,7 @@ def _free_port(port: int) -> None:
     """해당 포트를 점유 중인 프로세스를 종료한다."""
     import signal
     try:
-        import subprocess as _sp
-        result = _sp.run(
+        result = subprocess.run(
             ["lsof", "-ti", f":{port}"],
             capture_output=True, text=True
         )
@@ -590,8 +516,7 @@ def _free_port(port: int) -> None:
             except (ProcessLookupError, ValueError):
                 pass
         if pids:
-            import time as _time
-            _time.sleep(0.3)
+            time.sleep(0.3)
     except FileNotFoundError:
         pass  # lsof 없는 환경(Windows)은 건너뜀
 

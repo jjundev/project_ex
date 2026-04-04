@@ -8,7 +8,7 @@ Examples:
     python harness.py
     python harness.py --to pre-reviewer
     python harness.py --from result-generator
-    python harness.py --auto --max-rounds 2
+    python harness.py --max-rounds 2
     python harness.py --from pre-generator --to pre-generator
     python harness.py --dry-run
 """
@@ -53,11 +53,6 @@ MODEL_SONNET = "claude-sonnet-4-6"
 ROLE_MODELS: dict[str, str] = {
     "pre-generator":    MODEL_OPUS,
     "result-generator": MODEL_OPUS,
-}
-
-HUMAN_GATES: dict[str, str] = {
-    "pre-reviewer":    "예비보고서 검토 결과를 확인하였습니까? 계속하시겠습니까?",
-    "result-reviewer": "결과보고서 검토 결과를 확인하였습니까? 배포를 진행하시겠습니까?",
 }
 
 SKILL_PATHS: dict[str, Path] = {
@@ -173,23 +168,6 @@ def extract_fail_items(review_path: Path) -> str:
     return "\n".join(l for l in lines if "FAIL" in l)
 
 
-def human_gate(role: str) -> bool:
-    """인간 확인 게이트. True면 계속 진행."""
-    prompt_msg = HUMAN_GATES.get(role)
-    if not prompt_msg:
-        return True
-    try:
-        print(f"__GATE__ {role}", flush=True)  # GUI 감지용 센티널
-        if sys.stdin.isatty():
-            resp = input(f"\033[33m[gate]\033[0m [{role}] 완료. {prompt_msg} [y/N] ")
-        else:
-            resp = input()  # GUI가 프롬프트를 표시하므로 여기선 입력만 받음
-        return resp.strip().lower() == "y"
-    except (EOFError, KeyboardInterrupt):
-        print()
-        return False
-
-
 # ---------------------------------------------------------------------------
 # 프롬프트 빌더
 # ---------------------------------------------------------------------------
@@ -283,7 +261,7 @@ def _build_result_generator_prompt() -> str:
     measurements = _find_measurements()
     docx_files = collect_docx_files()
 
-    pre_list = "\n".join(f"  - {f}" for f in pre_reports)
+    pre_list = "\n".join(f"  - {f}" for f in pre_reports) or "  (없음)"
     meas_list = (
         "\n".join(f"  - {f}" for f in measurements)
         if measurements
@@ -331,9 +309,9 @@ def _build_result_reviewer_prompt(extra: str = "") -> str:
 
 ## 검증 항목
 
-1. **오차율 공식**: `|예상값 - 측정값| / 예상값 × 100 (%)` 계산 정확성
-2. **예상값 일치**: 결과보고서의 예상값이 예비보고서와 동일한지 확인
-3. **오차 원인 분석**: 저항 ±5%, 커패시터 ±10~20% 허용 오차 범위 고려 여부
+1. **오차율 공식**: `|Calculated - Measured| / Calculated × 100 (%)` 계산 정확성
+2. **Calculated 재계산**: 결과보고서의 Calculated 값이 실측 소자값으로 올바르게 재계산되었는지 확인
+3. **오차 원인 분석**: 저항 ±5% 등 허용 오차 범위 고려 여부
 
 ## 출력 형식
 
@@ -407,7 +385,7 @@ async def run_gan_loop(max_rounds: int = 3) -> bool:
             if review_path.exists():
                 review_path.rename(archive)
                 _log(f"pre_review.md → {archive.name}")
-            fail_summary = extract_fail_items(archive)
+            fail_summary = extract_fail_items(archive).strip()
             extra = (
                 f"재작업 모드. {round_num}번째 시도. "
                 f"이전 검토에서 발견된 KVL/KCL 오류:\n{fail_summary}"
@@ -438,7 +416,6 @@ async def run_gan_loop(max_rounds: int = 3) -> bool:
 async def run_pipeline(
     from_role: str,
     to_role: str,
-    auto: bool,
     max_rounds: int,
     dry_run: bool,
 ) -> None:
@@ -457,12 +434,6 @@ async def run_pipeline(
 
     if dry_run:
         print("실행 경로:", " → ".join(roles))
-        if auto:
-            print("모드: 완전 자동 (인간 게이트 없음)")
-        else:
-            gates = [r for r in roles if r in HUMAN_GATES]
-            if gates:
-                print(f"인간 게이트: {', '.join(gates)}")
         has_gan = "pre-generator" in roles and "pre-reviewer" in roles
         if has_gan:
             print(f"최대 GAN 라운드: {max_rounds}")
@@ -503,27 +474,18 @@ async def run_pipeline(
                 sys.exit(1)
             reviewer_idx = roles.index("pre-reviewer", i)
             i = reviewer_idx + 1
-            # GAN 루프 PASS 후 human gate (result-generator 진입 전 확인)
-            if not auto and "pre-reviewer" in HUMAN_GATES:
-                if not human_gate("pre-reviewer"):
-                    _log("사용자에 의해 중단됨.")
-                    return
             continue
 
         await run_role(role)
 
-        # result-reviewer: 판정 파싱 후 FAIL 경고
+        # result-reviewer: 판정 파싱 후 FAIL/UNKNOWN 처리
         if role == "result-reviewer":
             verdict = parse_review_verdict(OUTPUT_DIR / "result_review.md")
             if verdict == "FAIL":
                 _log_error("result-reviewer FAIL — 결과보고서에 오류가 있습니다. result_review.md를 확인하세요.")
             elif verdict == "UNKNOWN":
                 _log_error("result-reviewer 판정 미확인 — result_review.md에 '최종 판정' 줄이 없습니다.")
-
-        if role in HUMAN_GATES and not auto:
-            if not human_gate(role):
-                _log("사용자에 의해 중단됨.")
-                return
+                sys.exit(1)
 
         i += 1
 
@@ -557,11 +519,6 @@ def parse_args() -> argparse.Namespace:
         help=f"종료 역할 (default: {ROLE_ORDER[-1]})",
     )
     parser.add_argument(
-        "--auto",
-        action="store_true",
-        help="인간 게이트 없이 완전 자동 실행",
-    )
-    parser.add_argument(
         "--max-rounds",
         type=int,
         default=3,
@@ -583,7 +540,6 @@ def main() -> None:
             run_pipeline(
                 from_role=args.from_role,
                 to_role=args.to_role,
-                auto=args.auto,
                 max_rounds=args.max_rounds,
                 dry_run=args.dry_run,
             )

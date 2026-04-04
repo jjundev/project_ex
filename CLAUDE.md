@@ -15,9 +15,6 @@ python harness.py --to pre-reviewer
 # 결과보고서만 (예비보고서 선행 필요)
 python harness.py --from result-generator
 
-# 완전 자동 실행 (인간 게이트 없음)
-python harness.py --auto
-
 # GAN 루프 최대 횟수 지정
 python harness.py --to pre-reviewer --max-rounds 2
 
@@ -45,9 +42,9 @@ python harness.py --dry-run
 ## 보고서 품질 기준
 - 모든 예상값 Table에 **풀이 과정** 필수 포함
 - **KVL/KCL 검증** 수행 (폐회로 전압합 = 전원전압, 노드 전류 보존)
-- **단위 명시**: mA, V, kΩ, μF, s
-- DC 정상상태 분석: 커패시터 → 개방회로 치환
-- 과도응답 분석: v_C = E(1 - e^(-t/RC)), τ = RC
+- **단위 명시**: mA, V, kΩ, Ω, μF, s
+- 연립방정식은 크래머 공식으로 풀이하고 중간 과정을 생략하지 않는다
+- 실험 주제에 해당하는 분석 방법 적용 (옴의 법칙, 직병렬, 중첩, 테브난/노튼, 메쉬/노드 해석, DC 정상상태, 과도응답 등)
 
 ## docx/ 자료 준비 규칙
 1. `book/` 에 해당 주차 교재 페이지를 순서대로 스캔하여 저장
