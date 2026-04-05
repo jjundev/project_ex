@@ -149,41 +149,53 @@ async def run_role(role: str, extra: str = "", prompt_override: str | None = Non
     return result_text
 
 
-async def run_gan_loop(max_rounds: int = 3) -> bool:
-    """Generator ↔ Reviewer 2단계 루프 (Phase 1: 이론 / Phase 2: 예상 결과 값). PASS 시 True 반환."""
+async def run_gan_loop(max_rounds: int = 3, start_step: str = "p1g") -> bool:
+    """Generator ↔ Reviewer 2단계 루프 (Phase 1: 이론 / Phase 2: 예상 결과 값). PASS 시 True 반환.
+
+    start_step 값:
+      p1g  Phase 1 생성부터 (기본값)
+      p1r  Phase 1 검토부터 (1라운드에서 pre-generator 건너뜀)
+      p2g  Phase 2 생성부터 (Phase 1 전체 건너뜀)
+      p2r  Phase 2 검토부터 (Phase 1 전체 건너뜀, 2라운드에서 pre-generator 건너뜀)
+    """
     review_theory_path = OUTPUT_DIR / "pre_review_theory.md"
     review_calc_path = OUTPUT_DIR / "pre_review.md"
 
     # ── Phase 1: 실험 목적·준비물·이론 ─────────────────────────────────
-    _log("── Phase 1: 실험 목적·준비물·이론 ──")
-    for round_num in range(1, max_rounds + 1):
-        _log(f"── Phase 1 라운드 {round_num}/{max_rounds} ──")
+    if start_step not in ("p2g", "p2r"):
+        _log("── Phase 1: 실험 목적·준비물·이론 ──")
+        for round_num in range(1, max_rounds + 1):
+            _log(f"── Phase 1 라운드 {round_num}/{max_rounds} ──")
 
-        p1_extra = ""
-        if round_num > 1:
-            archive = OUTPUT_DIR / f"pre_review_theory_round{round_num - 1}.md"
-            archived_path = _archive_if_exists(review_theory_path, archive)
-            if archived_path is not None:
-                _log(f"pre_review_theory.md → {archived_path.name}")
-            fail_summary = extract_fail_items(archived_path).strip() if archived_path is not None else ""
-            p1_extra = (
-                f"재작업 모드. {round_num}번째 시도. "
-                f"이전 이론 검토에서 발견된 문제:\n{fail_summary}"
-            )
+            p1_extra = ""
+            if round_num > 1:
+                archive = OUTPUT_DIR / f"pre_review_theory_round{round_num - 1}.md"
+                archived_path = _archive_if_exists(review_theory_path, archive)
+                if archived_path is not None:
+                    _log(f"pre_review_theory.md → {archived_path.name}")
+                fail_summary = extract_fail_items(archived_path).strip() if archived_path is not None else ""
+                p1_extra = (
+                    f"재작업 모드. {round_num}번째 시도. "
+                    f"이전 이론 검토에서 발견된 문제:\n{fail_summary}"
+                )
 
-        await run_role("pre-generator", p1_extra)
-        await run_role("pre-reviewer", prompt_override=_build_pre_reviewer_phase1_prompt(p1_extra))
+            skip_gen = (start_step == "p1r") and round_num == 1
+            if not skip_gen:
+                await run_role("pre-generator", p1_extra)
+            await run_role("pre-reviewer", prompt_override=_build_pre_reviewer_phase1_prompt(p1_extra))
 
-        verdict = parse_review_verdict(review_theory_path)
-        _log(f"Phase 1 판정: {verdict}")
+            verdict = parse_review_verdict(review_theory_path)
+            _log(f"Phase 1 판정: {verdict}")
 
-        if verdict == "PASS":
-            _log("Phase 1 PASS — 이론 섹션 확정")
-            break
+            if verdict == "PASS":
+                _log("Phase 1 PASS — 이론 섹션 확정")
+                break
 
-        if round_num == max_rounds:
-            _log_error(f"Phase 1 {max_rounds}라운드 후 FAIL — 수동 검토 필요")
-            return False
+            if round_num == max_rounds:
+                _log_error(f"Phase 1 {max_rounds}라운드 후 FAIL — 수동 검토 필요")
+                return False
+    else:
+        _log("── Phase 1 건너뜀 (start_step: {start_step}) ──".format(start_step=start_step))
 
     # ── Phase 2: 예상 결과 값 ──────────────────────────────────────────
     _log("── Phase 2: 예상 결과 값 ──")
@@ -202,7 +214,9 @@ async def run_gan_loop(max_rounds: int = 3) -> bool:
                 f"이전 검토에서 발견된 KVL/KCL 오류:\n{fail_summary}"
             )
 
-        await run_role("pre-generator", prompt_override=_build_pre_generator_phase2_prompt(p2_extra))
+        skip_gen = (start_step == "p2r") and round_num == 1
+        if not skip_gen:
+            await run_role("pre-generator", prompt_override=_build_pre_generator_phase2_prompt(p2_extra))
         await run_role("pre-reviewer", prompt_override=_build_pre_reviewer_prompt(p2_extra))
 
         verdict = parse_review_verdict(review_calc_path)
@@ -219,41 +233,53 @@ async def run_gan_loop(max_rounds: int = 3) -> bool:
     return False
 
 
-async def run_result_loop(max_rounds: int = 3) -> bool:
-    """result-generator ↔ result-reviewer 2단계 루프 (Phase 1: 실험 결과 / Phase 2: 고찰). PASS 시 True 반환."""
+async def run_result_loop(max_rounds: int = 3, start_step: str = "p1g") -> bool:
+    """result-generator ↔ result-reviewer 2단계 루프 (Phase 1: 실험 결과 / Phase 2: 고찰). PASS 시 True 반환.
+
+    start_step 값:
+      p1g  Phase 1 생성부터 (기본값)
+      p1r  Phase 1 검토부터 (1라운드에서 result-generator 건너뜀)
+      p2g  Phase 2 생성부터 (Phase 1 전체 건너뜀)
+      p2r  Phase 2 검토부터 (Phase 1 전체 건너뜀, 1라운드에서 result-generator 건너뜀)
+    """
     review_data_path = OUTPUT_DIR / "result_review_data.md"
     review_path = OUTPUT_DIR / "result_review.md"
 
     # ── Phase 1: 실험 결과 ──────────────────────────────────────────────
-    _log("── 결과보고서 Phase 1: 실험 결과 ──")
-    for round_num in range(1, max_rounds + 1):
-        _log(f"── Phase 1 라운드 {round_num}/{max_rounds} ──")
+    if start_step not in ("p2g", "p2r"):
+        _log("── 결과보고서 Phase 1: 실험 결과 ──")
+        for round_num in range(1, max_rounds + 1):
+            _log(f"── Phase 1 라운드 {round_num}/{max_rounds} ──")
 
-        p1_extra = ""
-        if round_num > 1:
-            archive = OUTPUT_DIR / f"result_review_data_round{round_num - 1}.md"
-            archived_path = _archive_if_exists(review_data_path, archive)
-            if archived_path is not None:
-                _log(f"result_review_data.md → {archived_path.name}")
-            fail_summary = extract_fail_items(archived_path).strip() if archived_path is not None else ""
-            p1_extra = (
-                f"재작업 모드. {round_num}번째 시도. "
-                f"이전 검토에서 발견된 오류:\n{fail_summary}"
-            )
+            p1_extra = ""
+            if round_num > 1:
+                archive = OUTPUT_DIR / f"result_review_data_round{round_num - 1}.md"
+                archived_path = _archive_if_exists(review_data_path, archive)
+                if archived_path is not None:
+                    _log(f"result_review_data.md → {archived_path.name}")
+                fail_summary = extract_fail_items(archived_path).strip() if archived_path is not None else ""
+                p1_extra = (
+                    f"재작업 모드. {round_num}번째 시도. "
+                    f"이전 검토에서 발견된 오류:\n{fail_summary}"
+                )
 
-        await run_role("result-generator", p1_extra)
-        await run_role("result-reviewer", prompt_override=_build_result_reviewer_phase1_prompt(p1_extra))
+            skip_gen = (start_step == "p1r") and round_num == 1
+            if not skip_gen:
+                await run_role("result-generator", p1_extra)
+            await run_role("result-reviewer", prompt_override=_build_result_reviewer_phase1_prompt(p1_extra))
 
-        verdict = parse_review_verdict(review_data_path)
-        _log(f"Phase 1 판정: {verdict}")
+            verdict = parse_review_verdict(review_data_path)
+            _log(f"Phase 1 판정: {verdict}")
 
-        if verdict == "PASS":
-            _log("Phase 1 PASS — 실험 결과 확정")
-            break
+            if verdict == "PASS":
+                _log("Phase 1 PASS — 실험 결과 확정")
+                break
 
-        if round_num == max_rounds:
-            _log_error(f"Phase 1 {max_rounds}라운드 후 FAIL — 수동 검토 필요")
-            return False
+            if round_num == max_rounds:
+                _log_error(f"Phase 1 {max_rounds}라운드 후 FAIL — 수동 검토 필요")
+                return False
+    else:
+        _log("── 결과보고서 Phase 1 건너뜀 (start_step: {start_step}) ──".format(start_step=start_step))
 
     # ── Phase 2: 고찰 ──────────────────────────────────────────────────
     _log("── 결과보고서 Phase 2: 고찰 ──")
@@ -272,7 +298,9 @@ async def run_result_loop(max_rounds: int = 3) -> bool:
                 f"이전 고찰 검토에서 발견된 문제:\n{fail_summary}"
             )
 
-        await run_role("result-generator", prompt_override=_build_result_generator_phase2_prompt(p2_extra))
+        skip_gen = (start_step == "p2r") and round_num == 1
+        if not skip_gen:
+            await run_role("result-generator", prompt_override=_build_result_generator_phase2_prompt(p2_extra))
         await run_role("result-reviewer", prompt_override=_build_result_reviewer_phase2_prompt(p2_extra))
 
         verdict = parse_review_verdict(review_path)
@@ -294,6 +322,7 @@ async def run_pipeline(
     to_role: str,
     max_rounds: int,
     dry_run: bool,
+    start_step: str = "p1g",
 ) -> None:
     """from_role 부터 to_role 까지 하네스 파이프라인을 실행한다."""
     if from_role not in ROLE_ORDER:
@@ -318,6 +347,7 @@ async def run_pipeline(
             print("결과보고서 2단계: Phase 1 (실험 결과) + Phase 2 (고찰)")
         if has_pre_gan or has_result_gan:
             print(f"최대 GAN 라운드 (Phase당): {max_rounds}")
+            print(f"시작 스텝: {start_step}")
         return
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -355,7 +385,7 @@ async def run_pipeline(
 
         # pre GAN 루프 구간: pre-generator와 pre-reviewer가 모두 포함된 경우
         if role == "pre-generator" and "pre-reviewer" in roles[i:]:
-            success = await run_gan_loop(max_rounds=max_rounds)
+            success = await run_gan_loop(max_rounds=max_rounds, start_step=start_step)
             if not success:
                 _log_error("예비보고서 GAN 루프 실패. 파이프라인 중단.")
                 sys.exit(1)
@@ -365,7 +395,7 @@ async def run_pipeline(
 
         # result 루프 구간: result-generator와 result-reviewer가 모두 포함된 경우
         if role == "result-generator" and "result-reviewer" in roles[i:]:
-            success = await run_result_loop(max_rounds=max_rounds)
+            success = await run_result_loop(max_rounds=max_rounds, start_step=start_step)
             if not success:
                 _log_error("결과보고서 루프 실패. 파이프라인 중단.")
                 sys.exit(1)

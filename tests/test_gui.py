@@ -135,12 +135,14 @@ def test_root_page_served(gui_server) -> None:
     assert "미리보기" in body
 
 
-def test_preview_runs_harness_dry_run(gui_server) -> None:
+def test_preview_runs_harness_dry_run(gui_server, monkeypatch) -> None:
     base_url, _ = gui_server
+    # 파일 시스템에 예비보고서가 없으면 step=p1g → 처음부터 실행
+    monkeypatch.setattr(gui, "_STATE_DETECTION_AVAILABLE", False)
 
     status, headers, body = _request(
         base_url,
-        "/preview?from=pre-generator&to=pre-reviewer&rounds=2",
+        "/preview?mode=pre&rounds=2",
     )
 
     assert status == 200
@@ -158,7 +160,7 @@ def test_start_rejects_when_already_running(gui_server) -> None:
         base_url,
         "/start",
         method="POST",
-        payload={"from": "pre-generator", "to": "pre-generator", "maxRounds": 1},
+        payload={"mode": "pre", "maxRounds": 1},
     )
 
     assert status == 400
@@ -173,6 +175,8 @@ def test_start_emits_expected_events_with_mocked_popen(gui_server, monkeypatch) 
         return fake_proc
 
     monkeypatch.setattr(gui.subprocess, "Popen", _fake_popen)
+    # 파일 시스템 접근 없이 step=p1g 반환하도록 설정
+    monkeypatch.setattr(gui, "_STATE_DETECTION_AVAILABLE", False)
 
     listener: list[str] = []
     app_state.add_listener(listener)
@@ -181,7 +185,7 @@ def test_start_emits_expected_events_with_mocked_popen(gui_server, monkeypatch) 
             base_url,
             "/start",
             method="POST",
-            payload={"from": "pre-generator", "to": "pre-generator", "maxRounds": 2},
+            payload={"mode": "pre", "maxRounds": 2},
         )
         assert status == 200
         assert '"ok": true' in body.lower()

@@ -8,6 +8,121 @@ from typing import Callable
 from .config import BOOK_DIR, EXPERIMENT_DIR, INPUT_DIR, NOTE_DIR, OUTPUT_DIR
 
 
+def _has_expected_values_section(report_path: Path) -> bool:
+    """예비보고서에 '## 예상 결과 값' 섹션이 있는지 확인한다."""
+    if not report_path.exists():
+        return False
+    body = report_path.read_text(encoding="utf-8", errors="ignore")
+    return re.search(r"(?m)^\s*##\s*예상 결과 값\b", body) is not None
+
+
+def detect_pre_report_state(output_dir: Path = OUTPUT_DIR) -> dict:
+    """예비보고서 파이프라인 현재 상태를 감지한다.
+
+    Returns:
+        dict with keys:
+          - step: "p1g" | "p1r" | "p2g" | "p2r" | "done"
+          - label: 한국어 설명
+          - error: None (예비보고서는 차단 조건 없음)
+    """
+    pre_reports = _find_pre_reports(output_dir=output_dir)
+
+    if not pre_reports:
+        return {"step": "p1g", "label": "처음부터 시작 (예비보고서 없음)", "error": None}
+
+    latest_pre = Path(sorted(pre_reports)[-1])
+
+    if _has_expected_values_section(latest_pre):
+        # Phase 2 내용 이미 생성됨 → Phase 1 review 여부 무관, Phase 2 review 상태만 확인
+        calc_review = output_dir / "pre_review.md"
+        if not calc_review.exists():
+            return {"step": "p2r", "label": "Phase 2 검토 시작 (예상 결과 값 생성 완료)", "error": None}
+        calc_verdict = parse_review_verdict(calc_review)
+        if calc_verdict == "FAIL":
+            return {"step": "p2g", "label": "Phase 2 재생성 필요 (KVL/KCL 검토 FAIL)", "error": None}
+        if calc_verdict == "PASS":
+            return {"step": "done", "label": "예비보고서 완성됨", "error": None}
+        return {"step": "p2g", "label": "Phase 2 상태 불명확 → Phase 2부터 재시작", "error": None}
+
+    # Phase 2 미생성 → Phase 1 review 상태 확인
+    theory_review = output_dir / "pre_review_theory.md"
+    if not theory_review.exists():
+        return {"step": "p1r", "label": "Phase 1 검토 시작 (이론 섹션 생성 완료)", "error": None}
+
+    theory_verdict = parse_review_verdict(theory_review)
+    if theory_verdict == "FAIL":
+        return {"step": "p1g", "label": "Phase 1 재생성 필요 (이론 검토 FAIL)", "error": None}
+
+    return {"step": "p2g", "label": "Phase 2 생성 시작 (예상 결과 값 미생성)", "error": None}
+
+
+def detect_result_report_state(
+    output_dir: Path = OUTPUT_DIR,
+    input_dir: Path = INPUT_DIR,
+) -> dict:
+    """결과보고서 파이프라인 현재 상태를 감지한다.
+
+    Returns:
+        dict with keys:
+          - step: "p1g" | "p1r" | "p2g" | "p2r" | "done" | None (차단 시)
+          - label: 한국어 설명
+          - error: None | str  — None이 아니면 실행 불가
+    """
+    pre_reports = _find_pre_reports(output_dir=output_dir)
+    if not pre_reports:
+        return {
+            "step": None,
+            "label": "",
+            "error": "예비보고서가 없습니다. 먼저 예비보고서 모드를 완료하세요.",
+        }
+
+    pre_review_path = output_dir / "pre_review.md"
+    if parse_review_verdict(pre_review_path) != "PASS":
+        return {
+            "step": None,
+            "label": "",
+            "error": "예비보고서가 완성되지 않았습니다 (pre_review.md PASS 필요).",
+        }
+
+    measurements = _find_measurements(input_dir=input_dir)
+    if not measurements:
+        return {
+            "step": None,
+            "label": "",
+            "error": f"측정값 파일이 없습니다. {input_dir}/ 에 *측정값.md 를 추가하세요.",
+        }
+
+    result_reports = _find_result_report_paths(output_dir=output_dir)
+    if not result_reports:
+        return {"step": "p1g", "label": "처음부터 시작 (결과보고서 없음)", "error": None}
+
+    data_review = output_dir / "result_review_data.md"
+    if not data_review.exists():
+        return {"step": "p1r", "label": "Phase 1 검토 시작 (실험 결과 생성 완료)", "error": None}
+
+    data_verdict = parse_review_verdict(data_review)
+    if data_verdict == "FAIL":
+        return {"step": "p1g", "label": "Phase 1 재생성 필요 (실험 결과 검토 FAIL)", "error": None}
+
+    # data_verdict == "PASS"
+    latest_result = max(result_reports, key=lambda p: (p.stat().st_mtime, p.name))
+    if not _has_discussion_section(latest_result):
+        return {"step": "p2g", "label": "Phase 2 생성 시작 (고찰 섹션 미생성)", "error": None}
+
+    result_review = output_dir / "result_review.md"
+    if not result_review.exists():
+        return {"step": "p2r", "label": "Phase 2 검토 시작 (고찰 생성 완료)", "error": None}
+
+    result_verdict = parse_review_verdict(result_review)
+    if result_verdict == "FAIL":
+        return {"step": "p2g", "label": "Phase 2 재생성 필요 (고찰 검토 FAIL)", "error": None}
+
+    if result_verdict == "PASS":
+        return {"step": "done", "label": "결과보고서 완성됨", "error": None}
+
+    return {"step": "p2g", "label": "Phase 2 상태 불명확 → Phase 2부터 재시작", "error": None}
+
+
 def collect_docx_files(
     book_dir: Path = BOOK_DIR,
     note_dir: Path = NOTE_DIR,
