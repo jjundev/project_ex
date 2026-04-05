@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .config import EXPERIMENT_DIR, OUTPUT_DIR, TEMPLATE_PATH
+from .config import OUTPUT_DIR, STT_DIR, TEMPLATE_PATH
 from .io_state import (
     _find_measurements,
     _find_pre_reports,
@@ -17,7 +17,7 @@ def _build_pre_generator_prompt(extra: str = "") -> str:
     files = collect_docx_files()
     book_list = "\n".join(f"  - {f}" for f in files["book"]) or "  (없음)"
     note_list = "\n".join(f"  - {f}" for f in files["note"]) or "  (없음)"
-    exp_list = "\n".join(f"  - {f}" for f in files["experiment"]) or "  (없음)"
+    exp_list = "\n".join(f"  - {f}" for f in files["stt"]) or "  (없음)"
 
     rework_section = ""
     if extra:
@@ -30,13 +30,13 @@ def _build_pre_generator_prompt(extra: str = "") -> str:
 {rework_section}
 ## 입력 자료
 
-### 교재 스캔본 (docx/book/) — 이미지 파일
+### 교재 스캔본 (input/book/) — 이미지 파일
 {book_list}
 
-### 강의노트 (docx/note/) — PDF 파일
+### 강의노트 (input/note/) — PDF 파일
 {note_list}
 
-### 실험 영상 STT (docx/experiment/) — 텍스트 파일, 검증용
+### 실험 영상 STT (input/stt/) — 텍스트 파일, 검증용
 {exp_list}
 
 ### 템플릿
@@ -46,7 +46,7 @@ def _build_pre_generator_prompt(extra: str = "") -> str:
 
 - **이미지 (book/)**: Read 도구로 각 파일을 순서대로 읽으세요. 회로도, Table, Procedure가 보입니다.
 - **PDF (note/)**: Read 도구로 읽으세요. 10페이지 초과 시 pages 파라미터로 범위를 지정하세요 (예: "1-10").
-- **텍스트 (experiment/)**: Read 도구로 읽으세요.
+- **텍스트 (stt/)**: Read 도구로 읽으세요.
 
 ## 지시사항
 
@@ -81,7 +81,7 @@ def _build_pre_reviewer_prompt(extra: str = "") -> str:
 2. **KCL 검증**: 각 노드의 전류 보존 확인
 3. **단위 일관성**: mA, V, kΩ, μF, s 단위 명시 여부
 4. **계산 정확도**: 예상값 Table의 수식 및 수치 검토
-5. **STT 교차검증**: `{EXPERIMENT_DIR}` 에 STT 파일이 있으면 측정값과 비교
+5. **STT 교차검증**: `{STT_DIR}` 에 STT 파일이 있으면 측정값과 비교
 
 ## 출력 형식
 
@@ -124,17 +124,17 @@ def _build_pre_generator_phase2_prompt(extra: str = "") -> str:
 
 ## 입력 자료 (회로도·이론 확인용)
 
-### 교재 스캔본 (docx/book/) — 이미지 파일
+### 교재 스캔본 (input/book/) — 이미지 파일
 {book_list}
 
-### 강의노트 (docx/note/) — PDF 파일
+### 강의노트 (input/note/) — PDF 파일
 {note_list}
 
 ## 지시사항
 
 1. 현재 예비보고서를 읽으세요.
-2. `docx/book/` 이미지를 읽어 회로도와 Table 구조를 파악하세요.
-3. `docx/note/` PDF를 읽어 이론을 확인하세요.
+2. `input/book/` 이미지를 읽어 회로도와 Table 구조를 파악하세요.
+3. `input/note/` PDF를 읽어 이론을 확인하세요.
 4. system prompt의 **Step 2-4 (예상 결과 값)** 지침에 따라 각 Table의 예상값을 계산하세요.
 5. 기존 예비보고서 파일을 **수정**하여 `## 예상 결과 값` 섹션을 반영하세요.
    - 파일에 `## 예상 결과 값` 섹션이 **이미 있으면 교체**하고, 없으면 `## 보드 연결도` 바로 앞에 **삽입**하세요.
@@ -205,8 +205,8 @@ def _build_result_generator_prompt(extra: str = "") -> str:
         else "  (없음 - 사용자에게 입력 요청 필요)"
     )
     exp_list = (
-        "\n".join(f"  - {f}" for f in docx_files["experiment"])
-        if docx_files["experiment"]
+        "\n".join(f"  - {f}" for f in docx_files["stt"])
+        if docx_files["stt"]
         else "  (없음)"
     )
 
@@ -225,7 +225,7 @@ def _build_result_generator_prompt(extra: str = "") -> str:
 ### 예비보고서
 {pre_list}
 
-### 측정값 파일 (input/)
+### 측정값 파일 (input/measured/)
 {meas_list}
 
 ### 실험 영상 STT (참고용)

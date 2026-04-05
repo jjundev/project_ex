@@ -8,11 +8,12 @@ from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 DOCX_DIR = PROJECT_DIR / "docx"
-BOOK_DIR = DOCX_DIR / "book"
-NOTE_DIR = DOCX_DIR / "note"
-EXPERIMENT_DIR = DOCX_DIR / "experiment"
 TEMPLATE_PATH = DOCX_DIR / "template_pre_report.md"
 INPUT_DIR = PROJECT_DIR / "input"
+BOOK_DIR = INPUT_DIR / "book"
+NOTE_DIR = INPUT_DIR / "note"
+STT_DIR = INPUT_DIR / "stt"
+MEASURED_DIR = INPUT_DIR / "measured"
 OUTPUT_DIR = PROJECT_DIR / "output"
 SKILLS_DIR = PROJECT_DIR / "skills"
 

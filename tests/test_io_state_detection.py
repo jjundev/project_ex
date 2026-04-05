@@ -106,7 +106,7 @@ def _setup_pre_done(output_dir: Path) -> None:
 
 
 def test_detect_result_report_state_no_pre_report(tmp_path: Path) -> None:
-    result = detect_result_report_state(output_dir=tmp_path, input_dir=tmp_path)
+    result = detect_result_report_state(output_dir=tmp_path, measured_dir=tmp_path)
     assert result["error"] is not None
     assert result["step"] is None
 
@@ -114,57 +114,57 @@ def test_detect_result_report_state_no_pre_report(tmp_path: Path) -> None:
 def test_detect_result_report_state_pre_not_complete(tmp_path: Path) -> None:
     (tmp_path / "15주차_예비보고서.md").write_text("# 예비보고서\n", encoding="utf-8")
     # pre_review.md 없음 → 예비보고서 미완성
-    result = detect_result_report_state(output_dir=tmp_path, input_dir=tmp_path)
+    result = detect_result_report_state(output_dir=tmp_path, measured_dir=tmp_path)
     assert result["error"] is not None
 
 
 def test_detect_result_report_state_no_measurements(tmp_path: Path) -> None:
     _setup_pre_done(tmp_path)
-    input_dir = tmp_path / "input"
-    input_dir.mkdir()
-    result = detect_result_report_state(output_dir=tmp_path, input_dir=input_dir)
+    measured_dir = tmp_path / "measured"
+    measured_dir.mkdir()
+    result = detect_result_report_state(output_dir=tmp_path, measured_dir=measured_dir)
     assert result["error"] is not None
 
 
 def test_detect_result_report_state_no_result_report(tmp_path: Path) -> None:
     _setup_pre_done(tmp_path)
-    input_dir = tmp_path / "input"
-    input_dir.mkdir()
-    (input_dir / "15주차_측정값.md").write_text("# 측정값\n", encoding="utf-8")
-    result = detect_result_report_state(output_dir=tmp_path, input_dir=input_dir)
+    measured_dir = tmp_path / "measured"
+    measured_dir.mkdir()
+    (measured_dir / "15주차_측정값.md").write_text("# 측정값\n", encoding="utf-8")
+    result = detect_result_report_state(output_dir=tmp_path, measured_dir=measured_dir)
     assert result["step"] == "p1g"
     assert result["error"] is None
 
 
 def test_detect_result_report_state_report_no_data_review(tmp_path: Path) -> None:
     _setup_pre_done(tmp_path)
-    input_dir = tmp_path / "input"
-    input_dir.mkdir()
-    (input_dir / "15주차_측정값.md").write_text("# 측정값\n", encoding="utf-8")
+    measured_dir = tmp_path / "measured"
+    measured_dir.mkdir()
+    (measured_dir / "15주차_측정값.md").write_text("# 측정값\n", encoding="utf-8")
     (tmp_path / "15주차_결과보고서.md").write_text("# 결과보고서\n", encoding="utf-8")
-    result = detect_result_report_state(output_dir=tmp_path, input_dir=input_dir)
+    result = detect_result_report_state(output_dir=tmp_path, measured_dir=measured_dir)
     assert result["step"] == "p1r"
 
 
 def test_detect_result_report_state_data_pass_no_discussion(tmp_path: Path) -> None:
     _setup_pre_done(tmp_path)
-    input_dir = tmp_path / "input"
-    input_dir.mkdir()
-    (input_dir / "15주차_측정값.md").write_text("# 측정값\n", encoding="utf-8")
+    measured_dir = tmp_path / "measured"
+    measured_dir.mkdir()
+    (measured_dir / "15주차_측정값.md").write_text("# 측정값\n", encoding="utf-8")
     (tmp_path / "15주차_결과보고서.md").write_text("# 결과보고서\n", encoding="utf-8")
     _make_pass_review(tmp_path / "result_review_data.md")
-    result = detect_result_report_state(output_dir=tmp_path, input_dir=input_dir)
+    result = detect_result_report_state(output_dir=tmp_path, measured_dir=measured_dir)
     assert result["step"] == "p2g"
 
 
 def test_detect_result_report_state_done(tmp_path: Path) -> None:
     _setup_pre_done(tmp_path)
-    input_dir = tmp_path / "input"
-    input_dir.mkdir()
-    (input_dir / "15주차_측정값.md").write_text("# 측정값\n", encoding="utf-8")
+    measured_dir = tmp_path / "measured"
+    measured_dir.mkdir()
+    (measured_dir / "15주차_측정값.md").write_text("# 측정값\n", encoding="utf-8")
     (tmp_path / "15주차_결과보고서.md").write_text("# 결과보고서\n\n# 고찰\n\n내용\n", encoding="utf-8")
     _make_pass_review(tmp_path / "result_review_data.md")
     _make_pass_review(tmp_path / "result_review.md")
-    result = detect_result_report_state(output_dir=tmp_path, input_dir=input_dir)
+    result = detect_result_report_state(output_dir=tmp_path, measured_dir=measured_dir)
     assert result["step"] == "done"
     assert result["error"] is None

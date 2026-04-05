@@ -39,12 +39,14 @@ python harness.py --dry-run
 | Phase 2 검토 | `result-reviewer` | 고찰 품질 검토 → `result_review.md` | Sonnet |
 
 ## 디렉토리 구조
-- `docx/` : 입력 자료
+- `docx/` : 보고서 템플릿
+  - `template_pre_report.md` : 예비보고서 마크다운 템플릿
+  - `template_result_report.md` : 결과보고서 마크다운 템플릿
+- `input/` : 주차별 입력 자료
   - `book/` : 교재 스캔본 이미지 (회로도, Table, 실험 절차)
   - `note/` : 강의노트 PDF (이론, 공식)
-  - `experiment/` : 실험 영상 STT (`{ch}-{part}.txt`)
-  - `template_pre_report.md` : 예비보고서 마크다운 템플릿
-- `input/` : 결과보고서용 사용자 측정값 입력
+  - `stt/` : 실험 영상 STT (`{ch}-{part}.txt`)
+  - `measured/` : 실제 실험에서 측정한 값 (`{N}주차_측정값.md`)
 - `output/` : 생성된 보고서 (Markdown + PDF)
 
 ## 보고서 품질 기준
@@ -54,8 +56,10 @@ python harness.py --dry-run
 - 연립방정식은 크래머 공식으로 풀이하고 중간 과정을 생략하지 않는다
 - 실험 주제에 해당하는 분석 방법 적용 (옴의 법칙, 직병렬, 중첩, 테브난/노튼, 메쉬/노드 해석, DC 정상상태, 과도응답 등)
 
-## docx/ 자료 준비 규칙
+## input/ 자료 준비 규칙
 1. `book/` 에 해당 주차 교재 페이지를 순서대로 스캔하여 저장
 2. `note/` 에 해당 주차 강의노트 PDF 저장
-3. `experiment/` 에 실험 영상 STT 저장 (선택, 검증용)
+3. `stt/` 에 실험 영상 STT 저장 (선택, 검증용)
    - 파일명 형식: `{챕터번호}-{파트번호}.txt` (예: `15-1.txt`)
+4. `measured/` 에 실험 측정값 저장 (결과보고서 작성 시 필요)
+   - 파일명 형식: `{N}주차_측정값.md`
