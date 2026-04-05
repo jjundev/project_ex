@@ -53,6 +53,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="실행 경로만 출력하고 실제 실행하지 않음",
     )
+    parser.add_argument(
+        "--start-step",
+        dest="start_step",
+        default="p1g",
+        choices=["p1g", "p1r", "p2g", "p2r"],
+        help="GAN 루프 시작 스텝 (p1g: Phase1 생성부터, p1r: Phase1 검토부터, "
+             "p2g: Phase2 생성부터, p2r: Phase2 검토부터). default: p1g",
+    )
     return parser.parse_args()
 
 
@@ -66,6 +74,7 @@ def main() -> None:
                 to_role=args.to_role,
                 max_rounds=args.max_rounds,
                 dry_run=args.dry_run,
+                start_step=args.start_step,
             )
         )
     except HarnessError as e:

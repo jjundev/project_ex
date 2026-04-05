@@ -51,6 +51,37 @@ PHASE_START_RE = re.compile(r'── ((?:결과보고서 )?Phase \d+): (.+?) ─
 PHASE_ROUND_RE = re.compile(r'── Phase (\d+) 라운드 (\d+)/(\d+) ──')
 
 # ---------------------------------------------------------------------------
+# 상태 감지 (harness_core.io_state 활용)
+# ---------------------------------------------------------------------------
+
+try:
+    from harness_core.io_state import detect_pre_report_state, detect_result_report_state
+    from harness_core.config import OUTPUT_DIR as _OUTPUT_DIR, INPUT_DIR as _INPUT_DIR
+    _STATE_DETECTION_AVAILABLE = True
+except ImportError:
+    _STATE_DETECTION_AVAILABLE = False
+    _OUTPUT_DIR = PROJECT_DIR / "output"
+    _INPUT_DIR  = PROJECT_DIR / "input"
+
+# 모드별 --from / --to 고정 매핑
+_STEP_CLI_ARGS = {
+    "pre":    {"from": "pre-generator",    "to": "pre-reviewer"},
+    "result": {"from": "result-generator", "to": "result-reviewer"},
+}
+
+def _get_state(mode: str) -> dict:
+    """파일 상태를 감지하여 step/label/error 딕셔너리를 반환한다."""
+    if not _STATE_DETECTION_AVAILABLE:
+        return {"step": "p1g", "label": "상태 감지 불가 (harness_core 없음)", "error": None}
+    try:
+        if mode == "pre":
+            return detect_pre_report_state(output_dir=_OUTPUT_DIR)
+        else:
+            return detect_result_report_state(output_dir=_OUTPUT_DIR, input_dir=_INPUT_DIR)
+    except Exception as exc:
+        return {"step": "p1g", "label": "상태 감지 오류", "error": str(exc)}
+
+# ---------------------------------------------------------------------------
 # 앱 상태 (전역 싱글톤)
 # ---------------------------------------------------------------------------
 
@@ -96,15 +127,6 @@ state = _AppState()
 # ---------------------------------------------------------------------------
 
 def _build_html() -> str:
-    # select options
-    def opts(default_last: bool = False) -> str:
-        out = []
-        for r in ROLE_ORDER:
-            sel = 'selected' if (not default_last and r == ROLE_ORDER[0]) \
-                             or (default_last and r == ROLE_ORDER[-1]) else ''
-            out.append(f'<option value="{r}" {sel}>{ROLE_LABEL[r]}</option>')
-        return "\n".join(out)
-
     # pipeline pills
     pills = []
     for i, r in enumerate(ROLE_ORDER):
@@ -151,11 +173,17 @@ select:focus{{border-color:var(--blue)}}
 .arrow{{font-size:15px;color:var(--muted);font-weight:600;padding:0 2px}}
 hr{{border:none;border-top:1px solid var(--border);margin:20px 0}}
 .opts-row{{display:flex;align-items:center;gap:14px;flex-wrap:wrap}}
-.toggle{{display:flex;align-items:center;gap:7px;background:var(--log);
-         border-radius:9px;padding:9px 16px;cursor:pointer;border:none;
-         font-size:13px;font-weight:700;color:var(--muted);
-         font-family:inherit;transition:all .15s}}
-.toggle.on{{background:var(--blue);color:#fff}}
+.mode-row{{display:flex;gap:10px;margin-bottom:14px}}
+.mode-btn{{flex:1;border:2px solid var(--border);border-radius:11px;
+           padding:13px 0;font-size:15px;font-weight:700;cursor:pointer;
+           font-family:inherit;background:#fff;color:var(--sub);transition:all .15s}}
+.mode-btn.selected{{border-color:var(--blue);background:#EEF4FF;color:var(--blue)}}
+.state-card{{margin-top:12px;border-radius:10px;padding:12px 16px;
+             font-size:13px;font-weight:600;min-height:38px;
+             background:var(--log);color:var(--sub);display:none}}
+.state-card.visible{{display:block}}
+.state-card.done{{background:#E6FAF6;color:var(--green)}}
+.state-card.error{{background:#FEE8EA;color:var(--red)}}
 .num-wrap{{display:flex;align-items:center;gap:8px}}
 .num-wrap label{{font-size:13px;font-weight:700;color:var(--sub)}}
 input[type=number]{{width:62px;border:1.5px solid var(--border);border-radius:9px;
@@ -227,13 +255,12 @@ input[type=number]:focus{{border-color:var(--blue)}}
   <div class="sec">
     <div class="sec-title">실행 설정</div>
     <div class="card">
-      <div class="field-label">실행 범위</div>
-      <p class="field-desc">시작 역할부터 종료 역할까지 순서대로 실행합니다</p>
-      <div class="range-row">
-        <select id="from" onchange="updateRange()">{opts(False)}</select>
-        <span class="arrow">→</span>
-        <select id="to" onchange="updateRange()">{opts(True)}</select>
+      <div class="field-label">모드 선택</div>
+      <div class="mode-row">
+        <button class="mode-btn" id="mode-pre" onclick="selectMode('pre')">예비보고서 모드</button>
+        <button class="mode-btn" id="mode-result" onclick="selectMode('result')">결과보고서 모드</button>
       </div>
+      <div id="state-card" class="state-card"></div>
       <hr>
       <div class="field-label">옵션</div>
       <div class="opts-row" style="margin-top:10px">
@@ -274,6 +301,7 @@ let currentCardBody = null;
 let phaseCardCount  = 0;
 let activePhasePill = null;
 let isStopping      = false;
+let selectedMode    = 'pre';
 
 function setRunning(v) {{
   const stopBtn = document.getElementById('stop-btn');
@@ -290,6 +318,7 @@ function setRunning(v) {{
       activePhasePill.className = 'phase-pill done';
       activePhasePill = null;
     }}
+    setTimeout(() => fetchState(selectedMode), 500);
   }}
 }}
 
@@ -303,12 +332,60 @@ function resetStages() {{ ROLES.forEach(r => setStage(r, 'idle')); }}
 
 const TAG_CLASS = {{info:'li', error:'le', gan:'lg', dim:'ld'}};
 
+/* ── 모드 선택 ── */
+function updatePipelineDisplay(mode) {{
+  const preRoles    = ['pre-generator', 'pre-reviewer'];
+  const resultRoles = ['result-generator', 'result-reviewer'];
+  const active = mode === 'pre' ? preRoles : resultRoles;
+  ROLES.forEach((r, i) => {{
+    const pill  = document.getElementById('pill-' + r);
+    const arrow = document.getElementById('arrow-' + i);
+    if (pill)  pill.style.display  = active.includes(r) ? '' : 'none';
+    if (arrow) arrow.style.display = (active.includes(r) && i < ROLES.length - 1
+                                      && active.includes(ROLES[i + 1])) ? '' : 'none';
+  }});
+}}
+
+async function fetchState(mode) {{
+  const card     = document.getElementById('state-card');
+  const startBtn = document.getElementById('start-btn');
+  card.className = 'state-card visible';
+  card.textContent = '상태 확인 중...';
+  try {{
+    const r    = await fetch('/check-state?mode=' + mode);
+    const data = await r.json();
+    if (data.error) {{
+      card.className   = 'state-card visible error';
+      card.textContent = data.error;
+      startBtn.disabled = true;
+    }} else if (data.step === 'done') {{
+      card.className   = 'state-card visible done';
+      card.textContent = data.label;
+      startBtn.disabled = true;
+    }} else {{
+      card.className   = 'state-card visible';
+      card.textContent = data.label;
+      startBtn.disabled = false;
+    }}
+  }} catch(e) {{
+    card.className   = 'state-card visible error';
+    card.textContent = '상태 확인 실패: ' + e.message;
+    startBtn.disabled = true;
+  }}
+}}
+
+function selectMode(mode) {{
+  selectedMode = mode;
+  document.getElementById('mode-pre').classList.toggle('selected',    mode === 'pre');
+  document.getElementById('mode-result').classList.toggle('selected', mode === 'result');
+  updatePipelineDisplay(mode);
+  fetchState(mode);
+}}
+
 /* ── Phase 트랙 ── */
 function addPhaseCard(title) {{
   const track = document.getElementById('phase-track');
-  // 이전 active pill → done
   if (activePhasePill) activePhasePill.className = 'phase-pill done';
-  // 화살표 구분자
   if (phaseCardCount > 0) {{
     const sep = document.createElement('span');
     sep.className = 'phase-sep';
@@ -415,8 +492,7 @@ async function post(path, body={{}}) {{
 
 async function doStart() {{
   await post('/start', {{
-    from: document.getElementById('from').value,
-    to:   document.getElementById('to').value,
+    mode: selectedMode,
     maxRounds: +document.getElementById('rounds').value,
   }});
 }}
@@ -432,28 +508,14 @@ async function doStop() {{
 
 async function doPreview() {{
   clearLog(); resetStages();
-  const r = await fetch('/preview?from=' + document.getElementById('from').value
-    + '&to=' + document.getElementById('to').value
+  const r = await fetch('/preview?mode=' + selectedMode
     + '&rounds=' + document.getElementById('rounds').value);
   createLogCard('미리보기');
   appendLog(await r.text(), 'dim');
 }}
 
-function updateRange() {{
-  const fromIdx = ROLES.indexOf(document.getElementById('from').value);
-  const toIdx   = ROLES.indexOf(document.getElementById('to').value);
-  ROLES.forEach((r, i) => {{
-    const pill = document.getElementById('pill-' + r);
-    if (pill) pill.style.display = (i >= fromIdx && i <= toIdx) ? '' : 'none';
-    if (i < ROLES.length - 1) {{
-      const arrow = document.getElementById('arrow-' + i);
-      if (arrow) arrow.style.display = (i >= fromIdx && i < toIdx) ? '' : 'none';
-    }}
-  }});
-}}
-
 connectSSE();
-document.addEventListener('DOMContentLoaded', updateRange);
+document.addEventListener('DOMContentLoaded', () => selectMode('pre'));
 </script>
 </body>
 </html>"""
@@ -473,6 +535,8 @@ class Handler(BaseHTTPRequestHandler):
             self._sse()
         elif parsed.path == "/preview":
             self._preview(parse_qs(parsed.query))
+        elif parsed.path == "/check-state":
+            self._check_state(parse_qs(parsed.query))
         else:
             self.send_error(404)
 
@@ -524,12 +588,16 @@ class Handler(BaseHTTPRequestHandler):
             state.remove_listener(buf)
 
     def _preview(self, qs: dict) -> None:
-        from_role  = qs.get("from",   [ROLE_ORDER[0]])[0]
-        to_role    = qs.get("to",     [ROLE_ORDER[-1]])[0]
+        mode       = qs.get("mode",   ["pre"])[0]
         max_rounds = qs.get("rounds", ["3"])[0]
+        detected   = _get_state(mode)
+        step       = detected.get("step") or "p1g"
+        cli_roles  = _STEP_CLI_ARGS.get(mode, _STEP_CLI_ARGS["pre"])
         cmd = [PYTHON, str(HARNESS),
-               "--from", from_role, "--to", to_role,
-               "--max-rounds", max_rounds, "--dry-run"]
+               "--from", cli_roles["from"], "--to", cli_roles["to"],
+               "--max-rounds", max_rounds,
+               "--start-step", step,
+               "--dry-run"]
         res = subprocess.run(cmd, capture_output=True, text=True,
                              cwd=str(PROJECT_DIR))
         data = (res.stdout or res.stderr or "결과 없음").encode("utf-8")
@@ -539,6 +607,14 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _check_state(self, qs: dict) -> None:
+        mode = qs.get("mode", ["pre"])[0]
+        if mode not in ("pre", "result"):
+            self._json({"error": "mode must be pre or result"}, 400)
+            return
+        result = _get_state(mode)
+        self._json(result)
+
     # ── POST 핸들러 ─────────────────────────────────────────────────────────
 
     def _start(self, body: dict) -> None:
@@ -546,13 +622,24 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "이미 실행 중"}, 400)
             return
 
-        from_role  = body.get("from",      ROLE_ORDER[0])
-        to_role    = body.get("to",        ROLE_ORDER[-1])
+        mode       = body.get("mode",      "pre")
         max_rounds = body.get("maxRounds", 3)
 
+        # 최신 파일 상태 재감지
+        detected = _get_state(mode)
+        if detected.get("error"):
+            self._json({"error": detected["error"]}, 400)
+            return
+        step = detected.get("step", "p1g")
+        if step == "done":
+            self._json({"error": "이미 완성됨 — 실행할 단계가 없습니다."}, 400)
+            return
+
+        cli_roles = _STEP_CLI_ARGS.get(mode, _STEP_CLI_ARGS["pre"])
         cmd = [PYTHON, str(HARNESS),
-               "--from", from_role, "--to", to_role,
-               "--max-rounds", str(max_rounds)]
+               "--from", cli_roles["from"], "--to", cli_roles["to"],
+               "--max-rounds", str(max_rounds),
+               "--start-step", step]
 
         state.broadcast({"type": "clear"})
         state.broadcast({"type": "log", "text": f"$ {' '.join(cmd[2:])}\n\n", "tag": "dim"})
@@ -650,6 +737,15 @@ def _reader(stream, name: str) -> None:
 class _ThreadingHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+
+    def handle_error(self, request, client_address) -> None:  # type: ignore[override]
+        """클라이언트 연결 중단 등 무해한 소켓 오류는 조용히 무시한다."""
+        import sys
+        exc = sys.exc_info()[1]
+        _IGNORED_CONN_ERRORS = (ConnectionAbortedError, ConnectionResetError, BrokenPipeError)
+        if isinstance(exc, _IGNORED_CONN_ERRORS):
+            return
+        super().handle_error(request, client_address)
 
 
 def _free_port(port: int) -> None:
