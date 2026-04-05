@@ -28,10 +28,11 @@ from urllib.parse import parse_qs, urlparse
 # 상수
 # ---------------------------------------------------------------------------
 
-PROJECT_DIR = Path(__file__).parent.resolve()
-HARNESS     = PROJECT_DIR / "harness.py"
-PYTHON      = sys.executable
-DEFAULT_PORT = 7788
+PROJECT_DIR   = Path(__file__).parent.resolve()
+HARNESS       = PROJECT_DIR / "harness.py"
+NOTION_DEPLOY = PROJECT_DIR / "harness_core" / "notion_deploy.py"
+PYTHON        = sys.executable
+DEFAULT_PORT  = 7788
 
 ROLE_ORDER = ["pre-generator", "pre-reviewer", "result-generator", "result-reviewer"]
 ROLE_LABEL = {
@@ -46,9 +47,11 @@ ROLE_MODEL = {
     "result-generator": "Opus",
     "result-reviewer":  "Sonnet",
 }
-ANSI           = re.compile(r"\033\[[0-9;]*m")
-PHASE_START_RE = re.compile(r'── ((?:결과보고서 )?Phase \d+): (.+?) ──')
-PHASE_ROUND_RE = re.compile(r'── Phase (\d+) 라운드 (\d+)/(\d+) ──')
+ANSI             = re.compile(r"\033\[[0-9;]*m")
+PHASE_START_RE   = re.compile(r'── ((?:결과보고서 )?Phase \d+): (.+?) ──')
+PHASE_ROUND_RE   = re.compile(r'── Phase (\d+) 라운드 (\d+)/(\d+) ──')
+NOTION_STEP_RE   = re.compile(r'\[deploy:step\] (.+)')
+NOTION_UPLOAD_RE = re.compile(r'\[deploy\] 블록 업로드 (\d+)/(\d+)')
 
 # ---------------------------------------------------------------------------
 # 상태 감지 (harness_core.io_state 활용)
@@ -109,14 +112,23 @@ class _AppState:
 
     def on_stream_done(self) -> None:
         should_notify = False
-        code = -1
+        proc = None
         with self._lock:
             self._stream_done += 1
             if self._stream_done >= 2:
                 self._stream_done = 0
-                code = self.proc.poll() if self.proc else -1
+                proc = self.proc
                 should_notify = True
         if should_notify:
+            code = -1
+            if proc is not None:
+                try:
+                    # poll() 대신 wait() 사용: Windows에서 파이프 EOF 직후
+                    # 프로세스가 아직 완전히 종료되지 않아 poll()이 None을
+                    # 반환하는 경쟁 조건을 방지한다.
+                    code = proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    code = proc.poll() if proc.poll() is not None else -1
             self.broadcast({"type": "done", "code": code})
             self.broadcast({"type": "running", "value": False})
 
@@ -150,6 +162,7 @@ def _build_html() -> str:
 :root {{
   --blue:#3182F6; --blue-d:#1B64DA;
   --green:#00B493; --red:#F04452;
+  --violet:#7C3AED;
   --text:#191F28; --sub:#4E5968; --muted:#8B95A1;
   --border:#E5E8EB; --card:#F9FAFB; --log:#F2F4F6;
 }}
@@ -178,6 +191,16 @@ hr{{border:none;border-top:1px solid var(--border);margin:20px 0}}
            padding:13px 0;font-size:15px;font-weight:700;cursor:pointer;
            font-family:inherit;background:#fff;color:var(--sub);transition:all .15s}}
 .mode-btn.selected{{border-color:var(--blue);background:#EEF4FF;color:var(--blue)}}
+.mode-btn.notion-selected{{border-color:var(--violet);background:#F5F3FF;color:var(--violet)}}
+.text-input{{border:1.5px solid var(--border);border-radius:10px;padding:10px 16px;
+             font-size:14px;font-family:inherit;color:var(--text);outline:none;
+             width:100%;box-sizing:border-box;margin-top:6px}}
+.text-input:focus{{border-color:var(--violet)}}
+.report-list{{display:flex;flex-direction:column;gap:8px;margin-top:8px}}
+.report-card{{border:1.5px solid var(--border);border-radius:10px;padding:12px 16px;
+              cursor:pointer;transition:all .15s;background:#fff}}
+.report-card:hover{{border-color:var(--violet);background:#F5F3FF}}
+.report-card.selected{{border-color:var(--violet);background:#F5F3FF;color:var(--violet)}}
 .state-card{{margin-top:12px;border-radius:10px;padding:12px 16px;
              font-size:13px;font-weight:600;min-height:38px;
              background:var(--log);color:var(--sub);display:none}}
@@ -259,15 +282,29 @@ input[type=number]:focus{{border-color:var(--blue)}}
       <div class="mode-row">
         <button class="mode-btn" id="mode-pre" onclick="selectMode('pre')">예비보고서 모드</button>
         <button class="mode-btn" id="mode-result" onclick="selectMode('result')">결과보고서 모드</button>
+        <button class="mode-btn" id="mode-notion" onclick="selectMode('notion')">Notion에 배포</button>
       </div>
       <div id="state-card" class="state-card"></div>
       <hr>
-      <div class="field-label">옵션</div>
-      <div class="opts-row" style="margin-top:10px">
-        <div class="num-wrap">
-          <label>GAN 최대</label>
-          <input type="number" id="rounds" value="3" min="1" max="10">
+      <div id="pipeline-opts">
+        <div class="field-label">옵션</div>
+        <div class="opts-row" style="margin-top:10px">
+          <div class="num-wrap">
+            <label>GAN 최대</label>
+            <input type="number" id="rounds" value="3" min="1" max="10">
+          </div>
         </div>
+      </div>
+      <div id="notion-ui" style="display:none">
+        <div class="field-label">배포할 보고서</div>
+        <div id="report-list" class="report-list"><span style="color:var(--muted)">로딩 중...</span></div>
+        <div class="field-label" style="margin-top:16px">Notion 상위 페이지 URL</div>
+        <input type="text" id="notion-parent-url" class="text-input"
+               placeholder="https://www.notion.so/..." oninput="saveNotionPrefs()">
+        <div class="field-label" style="margin-top:12px">Notion 통합 토큰</div>
+        <input type="password" id="notion-token" class="text-input"
+               placeholder="secret_..." oninput="saveNotionPrefs()">
+        <div class="field-desc" style="margin-top:4px">Notion → 설정 → 통합 → Internal Integration Token</div>
       </div>
     </div>
   </div>
@@ -297,6 +334,8 @@ input[type=number]:focus{{border-color:var(--blue)}}
 <script>
 const ROLES   = {roles_json};
 let es = null;
+let selectedReport = null;
+let lastExitCode   = 0;
 let currentCardBody = null;
 let phaseCardCount  = 0;
 let activePhasePill = null;
@@ -315,10 +354,22 @@ function setRunning(v) {{
       resetStages();
       isStopping = false;
     }} else if (activePhasePill) {{
-      activePhasePill.className = 'phase-pill done';
+      activePhasePill.className = 'phase-pill' + (lastExitCode === 0 ? ' done' : ' failed');
       activePhasePill = null;
     }}
-    setTimeout(() => fetchState(selectedMode), 500);
+    if (selectedMode === 'notion') {{
+      const card = document.getElementById('state-card');
+      if (lastExitCode === 0) {{
+        card.className   = 'state-card visible done';
+        card.textContent = '✓ Notion에 성공적으로 배포되었습니다.';
+        document.getElementById('start-btn').disabled = true;
+      }} else {{
+        card.className   = 'state-card visible error';
+        card.textContent = '✗ 배포 실패 — 아래 로그를 확인하세요.';
+      }}
+    }} else {{
+      setTimeout(() => fetchState(selectedMode), 500);
+    }}
   }}
 }}
 
@@ -376,10 +427,82 @@ async function fetchState(mode) {{
 
 function selectMode(mode) {{
   selectedMode = mode;
-  document.getElementById('mode-pre').classList.toggle('selected',    mode === 'pre');
-  document.getElementById('mode-result').classList.toggle('selected', mode === 'result');
-  updatePipelineDisplay(mode);
-  fetchState(mode);
+  document.getElementById('mode-pre').classList.toggle('selected',         mode === 'pre');
+  document.getElementById('mode-result').classList.toggle('selected',      mode === 'result');
+  document.getElementById('mode-notion').classList.toggle('notion-selected', mode === 'notion');
+
+  const isNotion = mode === 'notion';
+  document.getElementById('pipeline-opts').style.display  = isNotion ? 'none' : '';
+  document.getElementById('notion-ui').style.display      = isNotion ? ''     : 'none';
+  document.querySelector('.pipeline').style.display       = isNotion ? 'none' : '';
+  document.getElementById('start-btn').textContent        = isNotion ? '배포하기' : '실행하기';
+
+  if (isNotion) {{
+    fetchReportList();
+    loadNotionPrefs();
+    document.getElementById('state-card').className = 'state-card';
+    document.getElementById('start-btn').disabled = true;
+  }} else {{
+    document.getElementById('start-btn').disabled = false;
+    updatePipelineDisplay(mode);
+    fetchState(mode);
+  }}
+}}
+
+/* ── Notion 모드 함수 ── */
+async function fetchReportList() {{
+  const list = document.getElementById('report-list');
+  list.innerHTML = '<span style="color:var(--muted)">로딩 중...</span>';
+  selectedReport = null;
+  try {{
+    const r    = await fetch('/list-reports');
+    const data = await r.json();
+    if (!data.files || data.files.length === 0) {{
+      list.innerHTML = '<span style="color:var(--muted)">output/ 폴더에 보고서 파일이 없습니다.</span>';
+      return;
+    }}
+    list.innerHTML = '';
+    data.files.forEach(f => {{
+      const card = document.createElement('div');
+      card.className = 'report-card';
+      card.innerHTML =
+        `<div class="report-card-name">${{f.name}}</div>` +
+        `<div class="field-desc">${{(f.size / 1024).toFixed(1)}} KB</div>`;
+      card.onclick = () => {{
+        list.querySelectorAll('.report-card').forEach(c => c.classList.remove('selected'));
+        card.classList.add('selected');
+        selectedReport = f.path;
+        document.getElementById('start-btn').disabled = false;
+        document.getElementById('state-card').className = 'state-card';
+      }};
+      list.appendChild(card);
+    }});
+  }} catch(e) {{
+    list.innerHTML = `<span style="color:var(--red)">보고서 목록 로드 실패: ${{e.message}}</span>`;
+  }}
+}}
+
+function loadNotionPrefs() {{
+  document.getElementById('notion-parent-url').value =
+    localStorage.getItem('notion_parent_url') || '';
+  document.getElementById('notion-token').value =
+    localStorage.getItem('notion_token') || '';
+}}
+
+function saveNotionPrefs() {{
+  localStorage.setItem('notion_parent_url',
+    document.getElementById('notion-parent-url').value);
+  localStorage.setItem('notion_token',
+    document.getElementById('notion-token').value);
+}}
+
+async function doDeployNotion() {{
+  const parentUrl = document.getElementById('notion-parent-url').value.trim();
+  const token     = document.getElementById('notion-token').value.trim();
+  if (!selectedReport) {{ alert('배포할 보고서를 선택해주세요.'); return; }}
+  if (!parentUrl)      {{ alert('Notion 상위 페이지 URL을 입력해주세요.'); return; }}
+  if (!token)          {{ alert('Notion 통합 토큰을 입력해주세요.'); return; }}
+  await post('/deploy-notion', {{ file: selectedReport, parentUrl, token }});
 }}
 
 /* ── Phase 트랙 ── */
@@ -465,10 +588,16 @@ function connectSSE() {{
     else if (m.type === 'stage')   setStage(m.role, m.state);
     else if (m.type === 'running') setRunning(m.value);
     else if (m.type === 'clear')   {{ clearLog(); resetStages(); }}
-    else if (m.type === 'done')    setRunning(false);
+    else if (m.type === 'done')    {{ lastExitCode = m.code; setRunning(false); }}
     else if (m.type === 'phase_start') {{
       addPhaseCard(m.title);
       createLogCard(m.title);
+    }}
+    else if (m.type === 'notion_upload') {{
+      if (activePhasePill) {{
+        activePhasePill.querySelector('.phase-pill-round').textContent =
+          m.uploaded + ' / ' + m.total + ' 블록';
+      }}
     }}
     else if (m.type === 'phase_round') {{
       updatePhaseRound(m.round, m.maxRounds);
@@ -491,10 +620,14 @@ async function post(path, body={{}}) {{
 }}
 
 async function doStart() {{
-  await post('/start', {{
-    mode: selectedMode,
-    maxRounds: +document.getElementById('rounds').value,
-  }});
+  if (selectedMode === 'notion') {{
+    await doDeployNotion();
+  }} else {{
+    await post('/start', {{
+      mode: selectedMode,
+      maxRounds: +document.getElementById('rounds').value,
+    }});
+  }}
 }}
 
 async function doStop() {{
@@ -537,6 +670,8 @@ class Handler(BaseHTTPRequestHandler):
             self._preview(parse_qs(parsed.query))
         elif parsed.path == "/check-state":
             self._check_state(parse_qs(parsed.query))
+        elif parsed.path == "/list-reports":
+            self._list_reports()
         else:
             self.send_error(404)
 
@@ -547,6 +682,8 @@ class Handler(BaseHTTPRequestHandler):
             self._start(body)
         elif path == "/stop":
             self._stop()
+        elif path == "/deploy-notion":
+            self._deploy_notion(body)
         else:
             self.send_error(404)
 
@@ -615,6 +752,18 @@ class Handler(BaseHTTPRequestHandler):
         result = _get_state(mode)
         self._json(result)
 
+    def _list_reports(self) -> None:
+        files = []
+        if _OUTPUT_DIR.exists():
+            for f in sorted(_OUTPUT_DIR.glob("*.md")):
+                if re.search(r"\d+주차.*(예비|결과)보고서\.md$", f.name):
+                    files.append({
+                        "name": f.name,
+                        "path": str(f),
+                        "size": f.stat().st_size,
+                    })
+        self._json({"files": files})
+
     # ── POST 핸들러 ─────────────────────────────────────────────────────────
 
     def _start(self, body: dict) -> None:
@@ -664,6 +813,48 @@ class Handler(BaseHTTPRequestHandler):
             state.proc.terminate()
         self._json({"ok": True})
 
+    def _deploy_notion(self, body: dict) -> None:
+        if state.proc and state.proc.poll() is None:
+            self._json({"error": "이미 실행 중"}, 400)
+            return
+
+        file_path  = body.get("file", "")
+        parent_url = body.get("parentUrl", "")
+        token      = body.get("token", "")
+
+        if not file_path or not parent_url or not token:
+            self._json({"error": "file, parentUrl, token 모두 필요합니다."}, 400)
+            return
+
+        if not Path(file_path).exists():
+            self._json({"error": f"파일을 찾을 수 없습니다: {file_path}"}, 400)
+            return
+
+        cmd = [PYTHON, str(NOTION_DEPLOY),
+               "--file", file_path,
+               "--parent-url", parent_url,
+               "--token", token]
+
+        state.broadcast({"type": "clear"})
+        state.broadcast({"type": "log",
+                          "text": f"$ notion_deploy --file {Path(file_path).name}\n\n",
+                          "tag": "dim"})
+
+        state._stream_done = 0
+        state.proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, encoding="utf-8", bufsize=1, cwd=str(PROJECT_DIR),
+        )
+        state.broadcast({"type": "running", "value": True})
+
+        threading.Thread(target=_reader, args=(state.proc.stdout, "out"),
+                         daemon=True).start()
+        threading.Thread(target=_reader, args=(state.proc.stderr, "err"),
+                         daemon=True).start()
+
+        self._json({"ok": True})
+
     # ── 공통 ────────────────────────────────────────────────────────────────
 
     def _read_json(self) -> dict:
@@ -695,17 +886,30 @@ def _reader(stream, name: str) -> None:
             if not clean:
                 continue
 
+            # Notion 배포 단계 마커 → phase_start 이벤트만 emit, 로그에는 출력 안 함
+            ms = NOTION_STEP_RE.search(clean)
+            if ms:
+                state.broadcast({"type": "phase_start", "title": ms.group(1)})
+                continue
+
             is_err = (name == "err")
             if is_err or ("✗" in clean or ("FAIL" in clean and "[harness]" in clean)):
                 tag = "error"
             elif "── Phase" in clean and "라운드" in clean:
                 tag = "gan"
-            elif "[harness]" in clean:
+            elif "[harness]" in clean or "[deploy]" in clean:
                 tag = "info"
             else:
                 tag = "default"
 
             state.broadcast({"type": "log", "text": clean + "\n", "tag": tag})
+
+            # Notion 블록 업로드 진행률 → notion_upload 이벤트
+            mu = NOTION_UPLOAD_RE.search(clean)
+            if mu:
+                state.broadcast({"type": "notion_upload",
+                                  "uploaded": int(mu.group(1)),
+                                  "total":    int(mu.group(2))})
 
             for role in ROLE_ORDER:
                 if f"▶ {role} 시작" in clean:
