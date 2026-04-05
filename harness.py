@@ -19,9 +19,16 @@ import asyncio
 import re
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
-from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, SystemMessage, query
+try:
+    from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, SystemMessage, query
+except ModuleNotFoundError:
+    ClaudeAgentOptions = None  # type: ignore[assignment]
+    ResultMessage = None  # type: ignore[assignment]
+    SystemMessage = None  # type: ignore[assignment]
+    query = None  # type: ignore[assignment]
 
 # ---------------------------------------------------------------------------
 # 경로 상수
@@ -81,6 +88,37 @@ def _log_error(msg: str) -> None:
     print(f"\033[31m[harness]\033[0m {msg}", file=sys.stderr, flush=True)
 
 
+
+def _ensure_sdk_available() -> None:
+    """claude_agent_sdk 의존성이 필요한 시점에 지연 확인한다."""
+    global ClaudeAgentOptions, ResultMessage, SystemMessage, query
+
+    if (
+        ClaudeAgentOptions is not None
+        and ResultMessage is not None
+        and SystemMessage is not None
+        and query is not None
+    ):
+        return
+
+    try:
+        from claude_agent_sdk import (
+            ClaudeAgentOptions as _ClaudeAgentOptions,
+            ResultMessage as _ResultMessage,
+            SystemMessage as _SystemMessage,
+            query as _query,
+        )
+    except ModuleNotFoundError as e:
+        raise HarnessError(
+            "claude-agent-sdk 가 설치되어 있지 않습니다. "
+            "`pip install -r requirements.txt` 후 다시 실행하세요."
+        ) from e
+
+    ClaudeAgentOptions = _ClaudeAgentOptions
+    ResultMessage = _ResultMessage
+    SystemMessage = _SystemMessage
+    query = _query
+
 def load_skill(role: str) -> str:
     """역할에 해당하는 SKILL.md를 읽어 system_prompt로 반환한다."""
     path = SKILL_PATHS.get(role)
@@ -91,6 +129,8 @@ def load_skill(role: str) -> str:
 
 def make_options(role: str) -> ClaudeAgentOptions:
     """역할에 맞는 ClaudeAgentOptions를 반환한다."""
+    _ensure_sdk_available()
+
     model = ROLE_MODELS.get(role, MODEL_SONNET)
     return ClaudeAgentOptions(
         model=model,
@@ -147,6 +187,34 @@ def _find_measurements() -> list[str]:
         return []
     return sorted(str(f) for f in INPUT_DIR.glob("*측정값.md"))
 
+
+
+def _find_result_report_paths() -> list[Path]:
+    """output/ 에서 결과보고서 파일 경로를 찾는다."""
+    if not OUTPUT_DIR.exists():
+        return []
+    return sorted(f for f in OUTPUT_DIR.glob("*결과보고서.md") if f.is_file())
+
+
+def _find_result_reports() -> list[str]:
+    """output/ 에서 결과보고서 파일 목록을 찾는다."""
+    return [str(f) for f in _find_result_report_paths()]
+
+
+def _latest_result_report() -> Path | None:
+    """가장 최근에 수정된 결과보고서 파일을 반환한다."""
+    paths = _find_result_report_paths()
+    if not paths:
+        return None
+    return max(paths, key=lambda p: (p.stat().st_mtime, p.name))
+
+
+def _has_discussion_section(report_path: Path) -> bool:
+    """결과보고서에 '# 고찰' 섹션이 있는지 확인한다."""
+    if not report_path.exists():
+        return False
+    body = report_path.read_text(encoding="utf-8", errors="ignore")
+    return re.search(r"(?m)^\s*#\s*고찰\b", body) is not None
 
 def parse_review_verdict(review_path: Path) -> str:
     """검토 파일에서 최종 판정 → PASS / FAIL / UNKNOWN 반환."""
@@ -408,7 +476,7 @@ def _build_result_generator_prompt(extra: str = "") -> str:
 
 
 def _build_result_generator_phase2_prompt(extra: str = "") -> str:
-    result_reports = sorted(str(f) for f in OUTPUT_DIR.glob("*결과보고서.md")) if OUTPUT_DIR.exists() else []
+    result_reports = _find_result_reports()
     report_list = "\n".join(f"  - {f}" for f in result_reports) or "  (없음)"
 
     rework_section = ""
@@ -442,7 +510,7 @@ def _build_result_reviewer_phase1_prompt(extra: str = "") -> str:
     if extra:
         rework_section = f"\n## 이전 검토 FAIL 항목 (재작업 반영 확인)\n{extra}\n"
 
-    result_reports = sorted(str(f) for f in OUTPUT_DIR.glob("*결과보고서.md")) if OUTPUT_DIR.exists() else []
+    result_reports = _find_result_reports()
     report_list = "\n".join(f"  - {f}" for f in result_reports) or "  (없음)"
     pre_reports = _find_pre_reports()
     pre_list = "\n".join(f"  - {f}" for f in pre_reports) or "  (없음)"
@@ -493,7 +561,7 @@ def _build_result_reviewer_phase2_prompt(extra: str = "") -> str:
     if extra:
         rework_section = f"\n## 이전 검토 FAIL 항목 (재작업 반영 확인)\n{extra}\n"
 
-    result_reports = sorted(str(f) for f in OUTPUT_DIR.glob("*결과보고서.md")) if OUTPUT_DIR.exists() else []
+    result_reports = _find_result_reports()
     report_list = "\n".join(f"  - {f}" for f in result_reports) or "  (없음)"
 
     return f"""생성된 결과보고서의 **고찰 섹션**을 검토하세요 (Phase 2 검토).
@@ -567,6 +635,39 @@ def _build_result_reviewer_prompt(extra: str = "") -> str:
 """
 
 
+
+def _select_result_reviewer_prompt(extra: str = "") -> tuple[str, Path, str]:
+    """result-reviewer 단독 실행 시 Phase를 자동 판별한다."""
+    latest_report = _latest_result_report()
+    if latest_report is not None and _has_discussion_section(latest_report):
+        return _build_result_reviewer_phase2_prompt(extra), OUTPUT_DIR / "result_review.md", "phase2"
+    return _build_result_reviewer_phase1_prompt(extra), OUTPUT_DIR / "result_review_data.md", "phase1"
+
+
+def _reserve_archive_path(base_archive_path: Path) -> Path:
+    """기존 파일과 충돌하지 않는 아카이브 경로를 반환한다."""
+    if not base_archive_path.exists():
+        return base_archive_path
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    candidate = base_archive_path.with_name(f"{base_archive_path.stem}_{stamp}{base_archive_path.suffix}")
+    index = 1
+    while candidate.exists():
+        candidate = base_archive_path.with_name(
+            f"{base_archive_path.stem}_{stamp}_{index}{base_archive_path.suffix}"
+        )
+        index += 1
+    return candidate
+
+
+def _archive_if_exists(src_path: Path, base_archive_path: Path) -> Path | None:
+    """소스 파일이 있으면 충돌 없는 경로로 아카이브한 뒤 경로를 반환한다."""
+    if not src_path.exists():
+        return None
+    archive_path = _reserve_archive_path(base_archive_path)
+    src_path.replace(archive_path)
+    return archive_path
+
 def build_prompt(role: str, extra: str = "") -> str:
     if role == "pre-generator":
         return _build_pre_generator_prompt(extra)
@@ -587,6 +688,8 @@ def build_prompt(role: str, extra: str = "") -> str:
 
 async def run_role(role: str, extra: str = "", prompt_override: str | None = None) -> str:
     """단일 역할을 claude_agent_sdk query()로 실행한다."""
+    _ensure_sdk_available()
+
     prompt = prompt_override if prompt_override is not None else build_prompt(role, extra)
     _log(f"▶ {role} 시작")
     start = time.monotonic()
@@ -632,10 +735,10 @@ async def run_gan_loop(max_rounds: int = 3) -> bool:
         p1_extra = ""
         if round_num > 1:
             archive = OUTPUT_DIR / f"pre_review_theory_round{round_num - 1}.md"
-            if review_theory_path.exists():
-                review_theory_path.rename(archive)
-                _log(f"pre_review_theory.md → {archive.name}")
-            fail_summary = extract_fail_items(archive).strip()
+            archived_path = _archive_if_exists(review_theory_path, archive)
+            if archived_path is not None:
+                _log(f"pre_review_theory.md → {archived_path.name}")
+            fail_summary = extract_fail_items(archived_path).strip() if archived_path is not None else ""
             p1_extra = (
                 f"재작업 모드. {round_num}번째 시도. "
                 f"이전 이론 검토에서 발견된 문제:\n{fail_summary}"
@@ -663,10 +766,10 @@ async def run_gan_loop(max_rounds: int = 3) -> bool:
         p2_extra = ""
         if round_num > 1:
             archive = OUTPUT_DIR / f"pre_review_round{round_num - 1}.md"
-            if review_calc_path.exists():
-                review_calc_path.rename(archive)
-                _log(f"pre_review.md → {archive.name}")
-            fail_summary = extract_fail_items(archive).strip()
+            archived_path = _archive_if_exists(review_calc_path, archive)
+            if archived_path is not None:
+                _log(f"pre_review.md → {archived_path.name}")
+            fail_summary = extract_fail_items(archived_path).strip() if archived_path is not None else ""
             p2_extra = (
                 f"재작업 모드. {round_num}번째 시도. "
                 f"이전 검토에서 발견된 KVL/KCL 오류:\n{fail_summary}"
@@ -707,10 +810,10 @@ async def run_result_loop(max_rounds: int = 3) -> bool:
         p1_extra = ""
         if round_num > 1:
             archive = OUTPUT_DIR / f"result_review_data_round{round_num - 1}.md"
-            if review_data_path.exists():
-                review_data_path.rename(archive)
-                _log(f"result_review_data.md → {archive.name}")
-            fail_summary = extract_fail_items(archive).strip()
+            archived_path = _archive_if_exists(review_data_path, archive)
+            if archived_path is not None:
+                _log(f"result_review_data.md → {archived_path.name}")
+            fail_summary = extract_fail_items(archived_path).strip() if archived_path is not None else ""
             p1_extra = (
                 f"재작업 모드. {round_num}번째 시도. "
                 f"이전 검토에서 발견된 오류:\n{fail_summary}"
@@ -738,10 +841,10 @@ async def run_result_loop(max_rounds: int = 3) -> bool:
         p2_extra = ""
         if round_num > 1:
             archive = OUTPUT_DIR / f"result_review_round{round_num - 1}.md"
-            if review_path.exists():
-                review_path.rename(archive)
-                _log(f"result_review.md → {archive.name}")
-            fail_summary = extract_fail_items(archive).strip()
+            archived_path = _archive_if_exists(review_path, archive)
+            if archived_path is not None:
+                _log(f"result_review.md → {archived_path.name}")
+            fail_summary = extract_fail_items(archived_path).strip() if archived_path is not None else ""
             p2_extra = (
                 f"재작업 모드. {round_num}번째 시도. "
                 f"이전 고찰 검토에서 발견된 문제:\n{fail_summary}"
@@ -803,8 +906,8 @@ async def run_pipeline(
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     INPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # result-side 시작 시 예비보고서 선행 확인
-    if from_role in ("result-generator", "result-reviewer"):
+    # result-side 사전 검증
+    if "result-generator" in roles:
         pre_reports = _find_pre_reports()
         if not pre_reports:
             raise HarnessError(
@@ -814,6 +917,12 @@ async def run_pipeline(
         if not measurements:
             raise HarnessError(
                 f"측정값 파일이 없습니다. {INPUT_DIR}/ 에 *측정값.md 파일을 추가하세요."
+            )
+    elif roles == ["result-reviewer"]:
+        result_reports = _find_result_reports()
+        if not result_reports:
+            raise HarnessError(
+                "결과보고서가 없습니다. 먼저 result-generator를 실행하여 결과보고서를 생성하세요."
             )
 
     _log(f"파이프라인 시작: {' → '.join(roles)}")
@@ -847,7 +956,14 @@ async def run_pipeline(
             i = reviewer_idx + 1
             continue
 
-        await run_role(role)
+        prompt_override = None
+        result_review_path = OUTPUT_DIR / "result_review.md"
+
+        if role == "result-reviewer" and roles == ["result-reviewer"]:
+            prompt_override, result_review_path, mode = _select_result_reviewer_prompt()
+            _log(f"result-reviewer 단독 실행 자동 모드: {mode} ({result_review_path.name})")
+
+        await run_role(role, prompt_override=prompt_override)
 
         # 단독 실행 시 판정 파싱 (GAN 루프 외부)
         if role == "pre-reviewer":
@@ -860,12 +976,16 @@ async def run_pipeline(
                 sys.exit(1)
 
         if role == "result-reviewer":
-            verdict = parse_review_verdict(OUTPUT_DIR / "result_review.md")
+            verdict = parse_review_verdict(result_review_path)
             if verdict == "FAIL":
-                _log_error("result-reviewer FAIL — 결과보고서에 오류가 있습니다. result_review.md를 확인하세요.")
+                _log_error(
+                    f"result-reviewer FAIL — 결과보고서에 오류가 있습니다. {result_review_path.name}를 확인하세요."
+                )
                 sys.exit(1)
             elif verdict == "UNKNOWN":
-                _log_error("result-reviewer 판정 미확인 — result_review.md에 '최종 판정' 줄이 없습니다.")
+                _log_error(
+                    f"result-reviewer 판정 미확인 — {result_review_path.name}에 '최종 판정' 줄이 없습니다."
+                )
                 sys.exit(1)
 
         i += 1

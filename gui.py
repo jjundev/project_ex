@@ -472,7 +472,7 @@ def _reader(stream, name: str) -> None:
             is_err = (name == "err")
             if is_err or ("✗" in clean or ("FAIL" in clean and "[harness]" in clean)):
                 tag = "error"
-            elif "── GAN 라운드" in clean:
+            elif "── Phase" in clean and "라운드" in clean:
                 tag = "gan"
             elif "[harness]" in clean:
                 tag = "info"
