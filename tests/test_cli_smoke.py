@@ -36,12 +36,22 @@ def test_cli_dry_run_smoke(args: list[str], expected_text: str) -> None:
     assert expected_text in proc.stdout
 
 
+def test_cli_dry_run_includes_full_pipeline_and_phase_guides() -> None:
+    proc = _run_harness(["--dry-run"], PROJECT_DIR)
+
+    assert proc.returncode == 0
+    assert "실행 경로: pre-generator → pre-reviewer → result-generator → result-reviewer" in proc.stdout
+    assert "예비보고서 2단계: Phase 1 (이론) + Phase 2 (예상 결과 값)" in proc.stdout
+    assert "결과보고서 2단계: Phase 1 (실험 결과) + Phase 2 (고찰)" in proc.stdout
+
+
 def test_result_reviewer_precheck_requires_result_report(tmp_path: Path) -> None:
     isolated = tmp_path / "isolated"
     isolated.mkdir()
 
     isolated_harness = isolated / "harness.py"
     shutil.copy2(HARNESS_PATH, isolated_harness)
+    shutil.copytree(PROJECT_DIR / "harness_core", isolated / "harness_core")
 
     proc = subprocess.run(
         [sys.executable, str(isolated_harness), "--from", "result-reviewer", "--to", "result-reviewer"],
