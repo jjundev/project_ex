@@ -69,6 +69,15 @@ command: pre-review
 
 하네스가 **KVL/KCL 검증**을 지시한 경우:
 
+### Step 0: 회로 topology 원본 대조 (필수)
+
+1. `docx/book/` 의 모든 이미지를 읽어 각 회로도(FIG)의 topology를 직접 파악한다.
+   - 각 노드와 노드 간 연결 소자를 이미지에서 확인한다.
+   - 커패시터/인덕터가 **주 전류 경로(직렬)**에 있는지, **병렬 분기**에 있는지 구분한다.
+2. 보고서의 `[Topology]` 기술과 이미지를 비교한다.
+   - 불일치 항목이 있으면 즉시 FAIL로 기록하고, 올바른 topology를 명시한다.
+   - topology가 틀리면 이후 KVL/KCL 계산 검증은 생략하고 FAIL을 반환한다.
+
 ### Step 1: 보고서 읽기
 
 하네스가 지정한 예비보고서 파일을 읽는다. `## 예상 결과 값` 섹션을 중점적으로 확인한다.
@@ -114,7 +123,11 @@ command: pre-review
 ```
 ## KVL/KCL 검증 결과
 
+### Topology 대조
+- [FIG X.X]: PASS 또는 FAIL (불일치 내용 및 올바른 topology)
+
 ### [Table 번호]
+- Topology: PASS 또는 FAIL (오류 내용)
 - KVL: PASS 또는 FAIL (오류 내용)
 - KCL: PASS 또는 FAIL (오류 내용)
 - 계산: PASS 또는 FAIL (오류 내용)
