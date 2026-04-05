@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from .config import BOOK_DIR, EXPERIMENT_DIR, INPUT_DIR, NOTE_DIR, OUTPUT_DIR
+from .config import BOOK_DIR, MEASURED_DIR, NOTE_DIR, OUTPUT_DIR, STT_DIR
 
 
 def _has_expected_values_section(report_path: Path) -> bool:
@@ -58,7 +58,7 @@ def detect_pre_report_state(output_dir: Path = OUTPUT_DIR) -> dict:
 
 def detect_result_report_state(
     output_dir: Path = OUTPUT_DIR,
-    input_dir: Path = INPUT_DIR,
+    measured_dir: Path = MEASURED_DIR,
 ) -> dict:
     """결과보고서 파이프라인 현재 상태를 감지한다.
 
@@ -84,12 +84,12 @@ def detect_result_report_state(
             "error": "예비보고서가 완성되지 않았습니다 (pre_review.md PASS 필요).",
         }
 
-    measurements = _find_measurements(input_dir=input_dir)
+    measurements = _find_measurements(measured_dir=measured_dir)
     if not measurements:
         return {
             "step": None,
             "label": "",
-            "error": f"측정값 파일이 없습니다. {input_dir}/ 에 *측정값.md 를 추가하세요.",
+            "error": f"측정값 파일이 없습니다. {measured_dir}/ 에 *측정값.md 를 추가하세요.",
         }
 
     result_reports = _find_result_report_paths(output_dir=output_dir)
@@ -126,10 +126,10 @@ def detect_result_report_state(
 def collect_docx_files(
     book_dir: Path = BOOK_DIR,
     note_dir: Path = NOTE_DIR,
-    experiment_dir: Path = EXPERIMENT_DIR,
+    stt_dir: Path = STT_DIR,
 ) -> dict[str, list[str]]:
-    """docx/ 하위 파일 목록을 수집하여 반환한다."""
-    result: dict[str, list[str]] = {"book": [], "note": [], "experiment": []}
+    """input/ 하위 파일 목록을 수집하여 반환한다."""
+    result: dict[str, list[str]] = {"book": [], "note": [], "stt": []}
     image_exts = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"}
 
     if book_dir.exists():
@@ -138,8 +138,8 @@ def collect_docx_files(
         )
     if note_dir.exists():
         result["note"] = sorted(str(f) for f in note_dir.glob("*") if f.is_file())
-    if experiment_dir.exists():
-        result["experiment"] = sorted(str(f) for f in experiment_dir.glob("*.txt") if f.is_file())
+    if stt_dir.exists():
+        result["stt"] = sorted(str(f) for f in stt_dir.glob("*.txt") if f.is_file())
 
     return result
 
@@ -151,11 +151,11 @@ def _find_pre_reports(output_dir: Path = OUTPUT_DIR) -> list[str]:
     return sorted(str(f) for f in output_dir.glob("*예비보고서.md"))
 
 
-def _find_measurements(input_dir: Path = INPUT_DIR) -> list[str]:
-    """input/ 에서 측정값 파일을 찾는다."""
-    if not input_dir.exists():
+def _find_measurements(measured_dir: Path = MEASURED_DIR) -> list[str]:
+    """input/measured/ 에서 측정값 파일을 찾는다."""
+    if not measured_dir.exists():
         return []
-    return sorted(str(f) for f in input_dir.glob("*측정값.md"))
+    return sorted(str(f) for f in measured_dir.glob("*측정값.md"))
 
 
 def _find_result_report_paths(output_dir: Path = OUTPUT_DIR) -> list[Path]:

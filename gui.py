@@ -59,12 +59,12 @@ NOTION_UPLOAD_RE = re.compile(r'\[deploy\] 블록 업로드 (\d+)/(\d+)')
 
 try:
     from harness_core.io_state import detect_pre_report_state, detect_result_report_state
-    from harness_core.config import OUTPUT_DIR as _OUTPUT_DIR, INPUT_DIR as _INPUT_DIR
+    from harness_core.config import OUTPUT_DIR as _OUTPUT_DIR, MEASURED_DIR as _MEASURED_DIR
     _STATE_DETECTION_AVAILABLE = True
 except ImportError:
     _STATE_DETECTION_AVAILABLE = False
-    _OUTPUT_DIR = PROJECT_DIR / "output"
-    _INPUT_DIR  = PROJECT_DIR / "input"
+    _OUTPUT_DIR   = PROJECT_DIR / "output"
+    _MEASURED_DIR = PROJECT_DIR / "input" / "measured"
 
 # 모드별 --from / --to 고정 매핑
 _STEP_CLI_ARGS = {
@@ -80,7 +80,7 @@ def _get_state(mode: str) -> dict:
         if mode == "pre":
             return detect_pre_report_state(output_dir=_OUTPUT_DIR)
         else:
-            return detect_result_report_state(output_dir=_OUTPUT_DIR, input_dir=_INPUT_DIR)
+            return detect_result_report_state(output_dir=_OUTPUT_DIR, measured_dir=_MEASURED_DIR)
     except Exception as exc:
         return {"step": "p1g", "label": "상태 감지 오류", "error": str(exc)}
 
