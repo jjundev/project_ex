@@ -25,10 +25,18 @@ python harness.py --dry-run
 ### 파이프라인 역할 순서
 `pre-generator` → `pre-reviewer` → `result-generator` → `result-reviewer`
 
-- **pre-generator**: 교재/강의노트/STT로 예비보고서 생성 (Opus)
-- **pre-reviewer**: KVL/KCL 검증 — `pre-generator`와 GAN 루프 (Sonnet)
-- **result-generator**: 예비보고서 + 측정값으로 결과보고서 생성 (Opus)
-- **result-reviewer**: 오차율 계산 검증 (Sonnet)
+예비보고서는 **2단계 GAN 루프**로 작성된다:
+
+| 단계 | 역할 | 내용 | 모델 |
+|---|---|---|---|
+| Phase 1 생성 | `pre-generator` | 실험 목적·준비물·이론 작성 | Opus |
+| Phase 1 검토 | `pre-reviewer` | 이론 섹션 완성도 검증 → `pre_review_theory.md` | Sonnet |
+| Phase 2 생성 | `pre-generator` | 예상 결과 값 추가 | Opus |
+| Phase 2 검토 | `pre-reviewer` | KVL/KCL 계산 검증 → `pre_review.md` | Sonnet |
+| Phase 1 생성 | `result-generator` | 실험 결과 섹션 작성 (연습 문제 미포함) | Opus |
+| Phase 1 검토 | `result-reviewer` | %(Difference) 수치 검증 → `result_review_data.md` | Sonnet |
+| Phase 2 생성 | `result-generator` | 고찰 섹션 추가 | Opus |
+| Phase 2 검토 | `result-reviewer` | 고찰 품질 검토 → `result_review.md` | Sonnet |
 
 ## 디렉토리 구조
 - `docx/` : 입력 자료
