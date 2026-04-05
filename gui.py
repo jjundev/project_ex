@@ -46,7 +46,9 @@ ROLE_MODEL = {
     "result-generator": "Opus",
     "result-reviewer":  "Sonnet",
 }
-ANSI = re.compile(r"\033\[[0-9;]*m")
+ANSI           = re.compile(r"\033\[[0-9;]*m")
+PHASE_START_RE = re.compile(r'── ((?:결과보고서 )?Phase \d+): (.+?) ──')
+PHASE_ROUND_RE = re.compile(r'── Phase (\d+) 라운드 (\d+)/(\d+) ──')
 
 # ---------------------------------------------------------------------------
 # 앱 상태 (전역 싱글톤)
@@ -75,13 +77,17 @@ class _AppState:
                 self._listeners.remove(buf)
 
     def on_stream_done(self) -> None:
+        should_notify = False
+        code = -1
         with self._lock:
             self._stream_done += 1
             if self._stream_done >= 2:
                 self._stream_done = 0
                 code = self.proc.poll() if self.proc else -1
-                self.broadcast({"type": "done", "code": code})
-                self.broadcast({"type": "running", "value": False})
+                should_notify = True
+        if should_notify:
+            self.broadcast({"type": "done", "code": code})
+            self.broadcast({"type": "running", "value": False})
 
 state = _AppState()
 
@@ -165,6 +171,9 @@ input[type=number]:focus{{border-color:var(--blue)}}
 .btn-d{{background:var(--red);color:#fff}}
 .btn-d:hover{{background:#C03040}}
 .btn-d:disabled{{background:var(--log);color:var(--muted);cursor:default}}
+.btn-d.stopping{{background:#C03040;color:#fff;cursor:default;
+                 animation:stop-pulse .9s ease-in-out infinite}}
+@keyframes stop-pulse{{0%,100%{{opacity:1}}50%{{opacity:.45}}}}
 .btn-s{{background:var(--log);color:var(--sub)}}
 .btn-s:hover{{background:var(--border)}}
 .btn-sm{{padding:8px 16px;font-size:13px}}
@@ -180,9 +189,32 @@ input[type=number]:focus{{border-color:var(--blue)}}
 .pill.failed{{background:var(--red)}}
 .pill.failed .pill-name,.pill.failed .pill-model{{color:#fff}}
 .log-hdr{{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}}
-#log{{background:var(--log);border-radius:12px;padding:16px 18px;
-      font-family:'Menlo','Consolas',monospace;font-size:12px;line-height:1.7;
-      color:#333D4B;height:340px;overflow-y:auto;white-space:pre-wrap;word-break:break-word}}
+.phase-track{{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:14px;min-height:0}}
+.phase-pill{{position:relative;overflow:hidden;background:var(--log);border-radius:10px;
+             padding:11px 16px;text-align:center;min-width:110px;transition:background .2s}}
+.phase-pill-name{{display:block;font-size:13px;font-weight:700;color:var(--muted)}}
+.phase-pill-round{{display:block;font-size:11px;color:var(--muted);margin-top:2px;min-height:14px}}
+.phase-pill.done{{background:var(--green)}}
+.phase-pill.done .phase-pill-name,.phase-pill.done .phase-pill-round{{color:#fff}}
+.phase-pill.active{{background:#1a1a1a}}
+.phase-pill.active .phase-pill-name,.phase-pill.active .phase-pill-round{{color:#fff}}
+.phase-pill.active::after{{content:'';position:absolute;top:0;left:-60%;width:50%;height:100%;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);
+  animation:wave-sweep 1.8s ease-in-out infinite}}
+@keyframes wave-sweep{{0%{{left:-60%}}100%{{left:120%}}}}
+.phase-sep{{font-size:15px;color:var(--muted);font-weight:600;padding:0 2px}}
+.log-card{{border:1px solid var(--border);border-radius:12px;margin-bottom:10px;overflow:hidden}}
+.log-card-hdr{{background:var(--card);padding:10px 16px;font-size:13px;font-weight:700;
+               color:var(--sub);display:flex;justify-content:space-between;
+               align-items:center;cursor:pointer;user-select:none}}
+.log-card-hdr.active{{color:var(--blue)}}
+.log-card-hdr.done{{color:var(--green)}}
+.log-card-body{{background:var(--log);padding:12px 16px;
+                font-family:'Menlo','Consolas',monospace;font-size:12px;line-height:1.7;
+                color:#333D4B;max-height:300px;overflow-y:auto;
+                white-space:pre-wrap;word-break:break-word}}
+.round-sep{{color:var(--muted);font-size:11px;font-weight:700;
+            border-top:1px solid var(--border);margin:6px 0;padding-top:6px;display:block}}
 .li{{color:#3182F6}} .le{{color:#F04452}} .lg{{color:#00B493}}
 .ld{{color:#8B95A1}}
 </style>
@@ -222,6 +254,7 @@ input[type=number]:focus{{border-color:var(--blue)}}
   <div class="sec">
     <div class="sec-title">진행 상황</div>
     <div class="pipeline">{''.join(pills)}</div>
+    <div id="phase-track" class="phase-track"></div>
   </div>
 
   <div class="sec">
@@ -229,7 +262,7 @@ input[type=number]:focus{{border-color:var(--blue)}}
       <div class="sec-title" style="margin:0">실행 로그</div>
       <button class="btn btn-s btn-sm" onclick="clearLog()">지우기</button>
     </div>
-    <div id="log"></div>
+    <div id="log-container"></div>
   </div>
 
 </div>
@@ -237,10 +270,27 @@ input[type=number]:focus{{border-color:var(--blue)}}
 <script>
 const ROLES   = {roles_json};
 let es = null;
+let currentCardBody = null;
+let phaseCardCount  = 0;
+let activePhasePill = null;
+let isStopping      = false;
 
 function setRunning(v) {{
+  const stopBtn = document.getElementById('stop-btn');
   document.getElementById('start-btn').disabled = v;
-  document.getElementById('stop-btn').disabled  = !v;
+  stopBtn.disabled = !v;
+  stopBtn.textContent = '중단';
+  stopBtn.classList.remove('stopping');
+  if (!v) {{
+    if (isStopping) {{
+      clearLog();
+      resetStages();
+      isStopping = false;
+    }} else if (activePhasePill) {{
+      activePhasePill.className = 'phase-pill done';
+      activePhasePill = null;
+    }}
+  }}
 }}
 
 function setStage(role, state) {{
@@ -252,16 +302,82 @@ function setStage(role, state) {{
 function resetStages() {{ ROLES.forEach(r => setStage(r, 'idle')); }}
 
 const TAG_CLASS = {{info:'li', error:'le', gan:'lg', dim:'ld'}};
+
+/* ── Phase 트랙 ── */
+function addPhaseCard(title) {{
+  const track = document.getElementById('phase-track');
+  // 이전 active pill → done
+  if (activePhasePill) activePhasePill.className = 'phase-pill done';
+  // 화살표 구분자
+  if (phaseCardCount > 0) {{
+    const sep = document.createElement('span');
+    sep.className = 'phase-sep';
+    sep.textContent = '→';
+    track.appendChild(sep);
+  }}
+  const pill = document.createElement('div');
+  pill.className = 'phase-pill active';
+  const nameEl = document.createElement('span');
+  nameEl.className = 'phase-pill-name';
+  nameEl.textContent = title;
+  const roundEl = document.createElement('span');
+  roundEl.className = 'phase-pill-round';
+  pill.appendChild(nameEl);
+  pill.appendChild(roundEl);
+  track.appendChild(pill);
+  activePhasePill = pill;
+  phaseCardCount++;
+}}
+
+function updatePhaseRound(round, maxRounds) {{
+  if (activePhasePill) {{
+    activePhasePill.querySelector('.phase-pill-round').textContent =
+      '라운드 ' + round + ' / ' + maxRounds;
+  }}
+}}
+
+/* ── 로그 카드 ── */
+function createLogCard(title) {{
+  const container = document.getElementById('log-container');
+  container.querySelectorAll('.log-card-hdr.active').forEach(h => {{
+    h.className = 'log-card-hdr done';
+  }});
+  const card = document.createElement('div');
+  card.className = 'log-card';
+  const hdr = document.createElement('div');
+  hdr.className = 'log-card-hdr active';
+  hdr.textContent = title;
+  const body = document.createElement('div');
+  body.className = 'log-card-body';
+  hdr.onclick = () => {{ body.style.display = body.style.display === 'none' ? '' : 'none'; }};
+  card.appendChild(hdr);
+  card.appendChild(body);
+  container.appendChild(card);
+  currentCardBody = body;
+  return body;
+}}
+
+function ensureDefaultCard() {{
+  if (!currentCardBody) createLogCard('일반');
+  return currentCardBody;
+}}
+
 function appendLog(text, tag) {{
-  const log = document.getElementById('log');
+  const target = ensureDefaultCard();
   const s = document.createElement('span');
   if (tag && TAG_CLASS[tag]) s.className = TAG_CLASS[tag];
   s.textContent = text;
-  log.appendChild(s);
-  log.scrollTop = log.scrollHeight;
+  target.appendChild(s);
+  target.scrollTop = target.scrollHeight;
 }}
 
-function clearLog() {{ document.getElementById('log').innerHTML = ''; }}
+function clearLog() {{
+  document.getElementById('log-container').innerHTML = '';
+  document.getElementById('phase-track').innerHTML   = '';
+  currentCardBody = null;
+  phaseCardCount  = 0;
+  activePhasePill = null;
+}}
 
 function connectSSE() {{
   if (es) {{ es.close(); }}
@@ -273,6 +389,20 @@ function connectSSE() {{
     else if (m.type === 'running') setRunning(m.value);
     else if (m.type === 'clear')   {{ clearLog(); resetStages(); }}
     else if (m.type === 'done')    setRunning(false);
+    else if (m.type === 'phase_start') {{
+      addPhaseCard(m.title);
+      createLogCard(m.title);
+    }}
+    else if (m.type === 'phase_round') {{
+      updatePhaseRound(m.round, m.maxRounds);
+      if (currentCardBody) {{
+        const sep = document.createElement('span');
+        sep.className = 'round-sep';
+        sep.textContent = '─── 라운드 ' + m.round + ' / ' + m.maxRounds + ' ───';
+        currentCardBody.appendChild(sep);
+        currentCardBody.scrollTop = currentCardBody.scrollHeight;
+      }}
+    }}
   }};
   es.onerror = () => setTimeout(connectSSE, 2000);
 }}
@@ -291,13 +421,21 @@ async function doStart() {{
   }});
 }}
 
-async function doStop() {{ await post('/stop'); }}
+async function doStop() {{
+  isStopping = true;
+  const btn = document.getElementById('stop-btn');
+  btn.textContent = '중단 중...';
+  btn.classList.add('stopping');
+  btn.disabled = true;
+  await post('/stop');
+}}
 
 async function doPreview() {{
   clearLog(); resetStages();
   const r = await fetch('/preview?from=' + document.getElementById('from').value
     + '&to=' + document.getElementById('to').value
     + '&rounds=' + document.getElementById('rounds').value);
+  createLogCard('미리보기');
   appendLog(await r.text(), 'dim');
 }}
 
@@ -354,6 +492,7 @@ class Handler(BaseHTTPRequestHandler):
         data = _build_html().encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -379,7 +518,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.write(b": ping\n\n")
                     self.wfile.flush()
                 time.sleep(0.1)
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass
         finally:
             state.remove_listener(buf)
@@ -488,6 +627,18 @@ def _reader(stream, name: str) -> None:
                     state.broadcast({"type": "stage", "role": role, "state": "done"})
                 elif f"✗ {role} 실패" in clean:
                     state.broadcast({"type": "stage", "role": role, "state": "failed"})
+
+            m = PHASE_START_RE.search(clean)
+            if m:
+                state.broadcast({"type": "phase_start",
+                                  "title": f"{m.group(1)}: {m.group(2)}"})
+
+            m = PHASE_ROUND_RE.search(clean)
+            if m:
+                state.broadcast({"type": "phase_round",
+                                  "phase": int(m.group(1)),
+                                  "round": int(m.group(2)),
+                                  "maxRounds": int(m.group(3))})
     finally:
         state.on_stream_done()
 
