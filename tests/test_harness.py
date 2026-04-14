@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import harness
+from harness_core import prompts
 
 
 def test_parse_review_verdict_pass_fail_unknown(tmp_path: Path) -> None:
@@ -103,3 +104,45 @@ def test_select_result_reviewer_prompt_phase2(tmp_path: Path, monkeypatch) -> No
     assert mode == "phase2"
     assert review_path == tmp_path / "result_review.md"
     assert "고찰 섹션" in prompt
+
+
+def test_result_generator_prompt_requires_book_table_structure() -> None:
+    prompt = prompts._build_result_generator_prompt()
+
+    assert "교재 스캔본 (input/book/) — Table 원형 확인용" in prompt
+    assert "`input/book/` 이미지를 다시 읽어 각 교재 Table" in prompt
+    assert "교재 Table 원형 구조를 최상위 기준" in prompt
+    assert "교재에 없는 `Calculated`, `Measured`, `%(Difference)` 열을 임의로 추가하지 마세요" in prompt
+    assert "`v_R = E - v_C`" in prompt
+
+
+def test_result_reviewer_prompt_checks_book_table_structure(tmp_path: Path) -> None:
+    report = tmp_path / "15주차_결과보고서.md"
+    report.write_text("# 15주차 결과보고서\n\n# 실험 결과\n\n데이터\n", encoding="utf-8")
+
+    prompt = prompts._build_result_reviewer_phase1_prompt(output_dir=tmp_path)
+
+    assert "교재 스캔본 (input/book/) — Table 원형 확인용" in prompt
+    assert "교재 Table 구조 대조" in prompt
+    assert "임의 열 추가/누락 검증" in prompt
+    assert "파생값 검증" in prompt
+    assert "Table 구조: PASS 또는 FAIL" in prompt
+
+
+def test_result_skills_lock_table_16_5_and_16_6_structure() -> None:
+    project_dir = Path(__file__).resolve().parents[1]
+    report_skill = (project_dir / "skills" / "result-report" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    review_skill = (project_dir / "skills" / "result-review" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    for skill_text in (report_skill, review_skill):
+        assert "Table 16.5" in skill_text
+        assert "`v_C`, `v_R`" in skill_text
+        assert "`v_R`" in skill_text
+        assert "`E - v_C`" in skill_text
+        assert "Table 16.6" in skill_text
+        assert "`1τ`, `5τ`" in skill_text
+        assert "Calculated`, `Measured`, `%(Difference)` 열" in skill_text

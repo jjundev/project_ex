@@ -28,18 +28,32 @@ command: result-review
 
 ### Step 1: 보고서 읽기
 
-하네스가 지정한 결과보고서와 예비보고서 파일을 읽는다.
+하네스가 지정한 결과보고서, 예비보고서, 교재 스캔본(`input/book/`)을 읽는다.
 
-### Step 2: Calculated 값 재계산 검증
+### Step 2: 교재 Table 구조 검증
 
-결과보고서의 Calculated 열이 **실측 소자값을 사용하여 올바르게 계산**되었는지 확인한다.
+각 Table을 검토할 때는 수치 검산보다 먼저 교재 원본과 구조를 대조한다.
+- 교재 Table 번호, 행 라벨, 열 라벨, 시간축 배치, 작성 지시문이 결과보고서에 반영되었는지 확인한다.
+- 교재에 있는 행/열이 결과보고서에서 빠졌으면 FAIL이다.
+- 교재에 없는 `Calculated`, `Measured`, `%(Difference)` 열이 결과보고서 Table에 임의 추가되었으면 FAIL이다.
+- 교재가 표 안에서 특정 공식으로 값을 완성하라고 요구한 경우, 그 파생값이 원래 행/열에 채워졌는지 확인한다.
+- 교재 이미지가 흐려 구조 확인이 불가능하면 PASS로 추정하지 말고 "교재 Table 구조 확인 불가"로 FAIL 또는 사용자 확인 필요 항목에 기록한다.
+
+특수 고정 검증:
+- **Table 16.5**는 `t(s)` 시간 열과 `v_C`, `v_R` 행을 가져야 한다. `v_R`는 각 시간에서 `E - v_C`로 계산되어야 하며, `Calculated`, `Measured`, `%(Difference)` 열이 있으면 FAIL이다.
+- **Table 16.6**은 `1τ`, `5τ` 열과 `v_C` 행 구조여야 한다. `Calculated`, `Measured`, `%(Difference)` 열이 있으면 FAIL이다.
+
+### Step 3: Calculated 값 재계산 검증
+
+교재 Table이 계산값 비교 구조를 요구하는 경우에만, 결과보고서의 Calculated 열이 **실측 소자값을 사용하여 올바르게 계산**되었는지 확인한다.
 - 결과보고서에 명시된 실측 소자값(예: R_1 = 1.19 kΩ)을 사용하여 직접 재계산한다.
 - 재계산한 값과 Calculated 열의 값이 일치하는지 확인한다.
 - 불일치 항목: 어떤 Table의 어떤 값이 다른지 구체적으로 기록한다.
+- 교재 원형상 Calculated 열이 없어야 하는 Table은 계산 검산 대상이 아니라 Table 구조 오류로 판정한다.
 
-### Step 3: 오차율 계산 검증
+### Step 4: 오차율 계산 검증
 
-각 Table의 오차율 계산을 직접 재계산한다.
+교재 Table이 계산값 비교 구조를 요구하는 경우에만 각 Table의 오차율 계산을 직접 재계산한다.
 
 ```
 %(Difference) = |Calculated - Measured| / Calculated × 100
@@ -49,8 +63,9 @@ command: result-review
 - 소수점 둘째 자리까지 표시하는지 확인한다.
 - 계산 오류 발견 시: 올바른 값을 명시한다.
 - %(Difference) > 20%인 항목은 별도로 표시하여 사용자에게 측정값 재확인을 권고한다.
+- 교재 원형상 %(Difference) 열이 없어야 하는 Table은 오차율 검산 대상이 아니라 Table 구조 오류로 판정한다.
 
-### Step 4: 결과 저장
+### Step 5: 결과 저장
 
 검토 결과를 하네스가 지정한 경로(`output/result_review_data.md`)에 저장한다.
 
@@ -60,6 +75,7 @@ command: result-review
 ## 실험 결과 검증
 
 ### [Table 번호]
+- Table 구조: PASS 또는 FAIL (교재 원형 대비 행/열 누락, 임의 열 추가 여부)
 - Calculated 재계산: PASS 또는 FAIL (오류 내용)
 - %(Difference) 계산: PASS 또는 FAIL (오류 내용 및 올바른 값)
 
@@ -133,5 +149,8 @@ command: result-review
 - 마지막 줄은 반드시 `최종 판정: PASS` 또는 `최종 판정: FAIL` 이어야 한다.
 - 오류가 하나라도 있으면 `최종 판정: FAIL`.
 - 보고서를 수정하지 마라. 오류를 찾아서 기록만 한다.
+- 교재 Table 원형 구조 검증은 모든 수치 검산보다 우선한다.
+- 교재에 없는 Calculated/Measured/%(Difference) 열을 추가한 Table은 수치가 맞아도 FAIL이다.
+- 교재에 있는 파생값 행/열을 누락한 Table은 수치가 맞아도 FAIL이다.
 - Calculated가 0일 때 오차율 공식을 그대로 적용하면 0으로 나눔 오류가 발생한다. 이 경우 절대 오차만 기록하는 것이 맞다.
 - **Predicted ≠ Calculated**: 예비보고서의 Predicted(공칭값 기준)와 결과보고서의 Calculated(실측값 기준)가 다른 것은 정상이다. 이를 오류로 판정하지 마라.

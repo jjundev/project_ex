@@ -199,6 +199,7 @@ def _build_result_generator_prompt(extra: str = "") -> str:
     docx_files = collect_docx_files()
 
     pre_list = "\n".join(f"  - {f}" for f in pre_reports) or "  (없음)"
+    book_list = "\n".join(f"  - {f}" for f in docx_files["book"]) or "  (없음)"
     meas_list = (
         "\n".join(f"  - {f}" for f in measurements)
         if measurements
@@ -225,6 +226,9 @@ def _build_result_generator_prompt(extra: str = "") -> str:
 ### 예비보고서
 {pre_list}
 
+### 교재 스캔본 (input/book/) — Table 원형 확인용
+{book_list}
+
 ### 측정값 파일 (input/measured/)
 {meas_list}
 
@@ -234,11 +238,14 @@ def _build_result_generator_prompt(extra: str = "") -> str:
 ## 지시사항
 
 1. 예비보고서를 읽어 예상값 테이블 구조를 파악하세요.
-2. 측정값 파일이 있으면 읽고, 없으면 사용자에게 각 Table별 측정값을 질문하세요.
-3. system prompt의 **Step 1~3** (예비보고서 로드, 실측값 입력, 실험 결과 작성)을 수행하세요.
-4. `# 실험 결과` 섹션만 작성하세요 (`# 고찰`, `# 연습 문제` 미작성).
-5. 최종 보고서는 `{OUTPUT_DIR}` 경로에 Markdown 파일로 저장하세요.
-6. 파일명 형식: `{{N}}주차_결과보고서.md`
+2. `input/book/` 이미지를 다시 읽어 각 교재 Table의 원래 행/열 구조와 작성 요구사항을 확인하세요.
+3. 측정값 파일이 있으면 읽고, 없으면 사용자에게 각 Table별 측정값을 질문하세요.
+4. 교재 Table 원형 구조를 최상위 기준으로 삼으세요. 교재에 없는 `Calculated`, `Measured`, `%(Difference)` 열을 임의로 추가하지 마세요.
+5. 교재가 `v_R = E - v_C`처럼 표 안의 파생값 작성을 요구하면, 그 값을 원래 Table 행/열에 채우세요.
+6. system prompt의 **Step 1~3** (예비보고서 로드, 실측값 입력, 실험 결과 작성)을 수행하세요.
+7. `# 실험 결과` 섹션만 작성하세요 (`# 고찰`, `# 연습 문제` 미작성).
+8. 최종 보고서는 `{OUTPUT_DIR}` 경로에 Markdown 파일로 저장하세요.
+9. 파일명 형식: `{{N}}주차_결과보고서.md`
 """
 
 
@@ -284,6 +291,8 @@ def _build_result_reviewer_phase1_prompt(
     report_list = "\n".join(f"  - {f}" for f in result_reports) or "  (없음)"
     pre_reports = _find_pre_reports(output_dir=output_dir)
     pre_list = "\n".join(f"  - {f}" for f in pre_reports) or "  (없음)"
+    docx_files = collect_docx_files()
+    book_list = "\n".join(f"  - {f}" for f in docx_files["book"]) or "  (없음)"
 
     return f"""생성된 결과보고서의 **실험 결과 섹션**을 검증하세요 (Phase 1 검토).
 {rework_section}
@@ -295,13 +304,19 @@ def _build_result_reviewer_phase1_prompt(
 예비보고서 (Predicted 값 참조용):
 {pre_list}
 
+교재 스캔본 (input/book/) — Table 원형 확인용:
+{book_list}
+
 ## 검증 항목
 
 `# 실험 결과` 섹션만 검토하세요 (고찰 섹션은 아직 없습니다):
 
-1. **Calculated 값 재계산**: 보고서에 명시된 실측 소자값으로 직접 재계산하여 Calculated 열과 일치하는지 확인
-2. **%(Difference) 검증**: `|Calculated - Measured| / Calculated × 100` 공식으로 재계산, 일치 여부 확인
-3. **단위 일관성**: mA, V, kΩ, Ω, μF, s 등 단위 표기 여부
+1. **교재 Table 구조 대조**: `input/book/` 원본의 Table 번호, 행/열 라벨, 작성 요구사항과 결과보고서 Table 구조가 일치하는지 확인
+2. **임의 열 추가/누락 검증**: 교재에 없는 `Calculated`, `Measured`, `%(Difference)` 열이 추가되었거나, 교재에 있는 행/열이 빠졌으면 FAIL
+3. **파생값 검증**: 교재가 `v_R = E - v_C`처럼 요구한 표 안의 파생값이 원래 행/열에 채워졌는지 확인
+4. **Calculated 값 재계산**: 교재 Table이 계산값 비교 구조를 요구하는 경우에만, 실측 소자값으로 직접 재계산하여 Calculated 열과 일치하는지 확인
+5. **%(Difference) 검증**: 교재 Table이 계산값 비교 구조를 요구하는 경우에만 `|Calculated - Measured| / Calculated × 100` 공식으로 재계산
+6. **단위 일관성**: mA, V, kΩ, Ω, μF, s 등 단위 표기 여부
 
 ## 출력 형식
 
@@ -312,6 +327,7 @@ def _build_result_reviewer_phase1_prompt(
 ## 실험 결과 검증
 
 ### [Table 번호]
+- Table 구조: PASS 또는 FAIL (교재 원형 대비 행/열 누락, 임의 열 추가 여부)
 - Calculated 재계산: PASS 또는 FAIL (오류 내용)
 - %(Difference) 계산: PASS 또는 FAIL (오류 내용 및 올바른 값)
 
@@ -388,6 +404,8 @@ def _build_result_reviewer_prompt(extra: str = "", output_dir: Path = OUTPUT_DIR
     rework_section = ""
     if extra:
         rework_section = f"\n## 이전 검토 FAIL 항목\n{extra}\n"
+    docx_files = collect_docx_files()
+    book_list = "\n".join(f"  - {f}" for f in docx_files["book"]) or "  (없음)"
 
     return f"""생성된 결과보고서의 오차율 계산을 검증하세요.
 {rework_section}
@@ -395,11 +413,16 @@ def _build_result_reviewer_prompt(extra: str = "", output_dir: Path = OUTPUT_DIR
 
 `{output_dir}` 경로의 최신 결과보고서 (`*주차_결과보고서.md`)를 읽으세요.
 
+교재 스캔본 (input/book/) — Table 원형 확인용:
+{book_list}
+
 ## 검증 항목
 
-1. **오차율 공식**: `|Calculated - Measured| / Calculated × 100 (%)` 계산 정확성
-2. **Calculated 재계산**: 결과보고서의 Calculated 값이 실측 소자값으로 올바르게 재계산되었는지 확인
-3. **오차 원인 분석**: 저항 ±5% 등 허용 오차 범위 고려 여부
+1. **교재 Table 구조 대조**: 원본 Table의 행/열 라벨과 결과보고서 Table 구조가 일치하는지 확인
+2. **임의 열 추가/누락 검증**: 교재에 없는 `Calculated`, `Measured`, `%(Difference)` 열이 추가되었거나, 교재에 있는 행/열이 빠졌으면 FAIL
+3. **오차율 공식**: 교재 Table이 계산값 비교 구조를 요구하는 경우에만 `|Calculated - Measured| / Calculated × 100 (%)` 계산 정확성 확인
+4. **Calculated 재계산**: 교재 Table이 계산값 비교 구조를 요구하는 경우에만 실측 소자값으로 올바르게 재계산되었는지 확인
+5. **오차 원인 분석**: 저항 ±5% 등 허용 오차 범위 고려 여부
 
 ## 출력 형식
 
