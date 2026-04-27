@@ -104,7 +104,7 @@ def _log_input_summary(files: dict[str, list[str]]) -> None:
     """발견된 입력 파일 목록을 로그로 출력한다."""
     total = sum(len(v) for v in files.values())
     _log(f"입력 자료 {total}개 발견")
-    labels = {"book": "교재 스캔본(이미지)", "note": "강의노트(PDF)", "experiment": "STT(텍스트)"}
+    labels = {"book": "교재 스캔본(이미지)", "note": "강의노트(PDF)", "stt": "STT(텍스트)"}
     for key, paths in files.items():
         if paths:
             _log(f"  {labels[key]}: {len(paths)}개")
