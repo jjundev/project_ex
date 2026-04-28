@@ -294,6 +294,12 @@ def _build_result_reviewer_phase1_prompt(
     pre_list = "\n".join(f"  - {f}" for f in pre_reports) or "  (없음)"
     docx_files = collect_docx_files()
     book_list = "\n".join(f"  - {f}" for f in docx_files["book"]) or "  (없음)"
+    measurements = _find_measurements()
+    meas_list = (
+        "\n".join(f"  - {f}" for f in measurements)
+        if measurements
+        else "  (없음 - Measured 열 원본 대조 생략)"
+    )
 
     return f"""생성된 결과보고서의 **실험 결과 섹션**을 검증하세요 (Phase 1 검토).
 {rework_section}
@@ -308,6 +314,9 @@ def _build_result_reviewer_phase1_prompt(
 교재 스캔본 (input/book/) — Table 원형 확인용:
 {book_list}
 
+측정값 파일 (input/measured/) — Measured 열 원본 대조용:
+{meas_list}
+
 ## 검증 항목
 
 `# 실험 결과` 섹션만 검토하세요 (고찰 섹션은 아직 없습니다):
@@ -315,9 +324,10 @@ def _build_result_reviewer_phase1_prompt(
 1. **교재 Table 구조 대조**: `input/book/` 원본의 Table 번호, 행/열 라벨, 작성 요구사항과 결과보고서 Table 구조가 일치하는지 확인
 2. **임의 열 추가/누락 검증**: 교재에 없는 `Calculated`, `Measured`, `%(Difference)` 열이 추가되었거나, 교재에 있는 행/열이 빠졌으면 FAIL
 3. **파생값 검증**: 교재가 `v_R = E - v_C`처럼 요구한 표 안의 파생값이 원래 행/열에 채워졌는지 확인
-4. **Calculated 값 재계산**: 교재 Table이 계산값 비교 구조를 요구하는 경우에만, 실측 소자값으로 직접 재계산하여 Calculated 열과 일치하는지 확인
-5. **%(Difference) 검증**: 교재 Table이 계산값 비교 구조를 요구하는 경우에만 `|Calculated - Measured| / Calculated × 100` 공식으로 재계산
-6. **단위 일관성**: mA, V, kΩ, Ω, μF, s 등 단위 표기 여부
+4. **Measured 열 원본 대조**: `input/measured/` 의 측정값 파일이 있으면 읽고, 결과보고서 Table의 Measured 열 값이 원본 측정값과 일치하는지 1:1 비교 (옮겨 적기 누락·오기·단위 변환 오류 발견 시 FAIL). 측정값 파일이 없으면 "측정값 파일 없음 — 원본 대조 생략"으로 표기하고 PASS 판정을 막지 않음
+5. **Calculated 값 재계산**: 교재 Table이 계산값 비교 구조를 요구하는 경우에만, 실측 소자값으로 직접 재계산하여 Calculated 열과 일치하는지 확인
+6. **%(Difference) 검증**: 교재 Table이 계산값 비교 구조를 요구하는 경우에만 `|Calculated - Measured| / Calculated × 100` 공식으로 재계산
+7. **단위 일관성**: mA, V, kΩ, Ω, μF, s 등 단위 표기 여부
 
 ## 출력 형식
 
@@ -329,6 +339,7 @@ def _build_result_reviewer_phase1_prompt(
 
 ### [Table 번호]
 - Table 구조: PASS 또는 FAIL (교재 원형 대비 행/열 누락, 임의 열 추가 여부)
+- Measured 원본 대조: PASS 또는 FAIL (대조 불가 시 "측정값 파일 없음")
 - Calculated 재계산: PASS 또는 FAIL (오류 내용)
 - %(Difference) 계산: PASS 또는 FAIL (오류 내용 및 올바른 값)
 
@@ -340,6 +351,7 @@ def _build_result_reviewer_phase1_prompt(
 
 마지막 줄은 반드시 `최종 판정: PASS` 또는 `최종 판정: FAIL` 형식으로 끝내세요.
 오류가 하나라도 있으면 FAIL, %(Difference) > 20%인 항목은 별도 표시하여 측정값 재확인을 권고하세요.
+측정값 파일이 존재하지 않는 것은 FAIL 사유가 아닙니다. 단, 파일이 있는데 보고서 Measured 값과 다르면 FAIL입니다.
 """
 
 
@@ -407,6 +419,12 @@ def _build_result_reviewer_prompt(extra: str = "", output_dir: Path = OUTPUT_DIR
         rework_section = f"\n## 이전 검토 FAIL 항목\n{extra}\n"
     docx_files = collect_docx_files()
     book_list = "\n".join(f"  - {f}" for f in docx_files["book"]) or "  (없음)"
+    measurements = _find_measurements()
+    meas_list = (
+        "\n".join(f"  - {f}" for f in measurements)
+        if measurements
+        else "  (없음 - Measured 열 원본 대조 생략)"
+    )
 
     return f"""생성된 결과보고서의 오차율 계산을 검증하세요.
 {rework_section}
@@ -417,18 +435,23 @@ def _build_result_reviewer_prompt(extra: str = "", output_dir: Path = OUTPUT_DIR
 교재 스캔본 (input/book/) — Table 원형 확인용:
 {book_list}
 
+측정값 파일 (input/measured/) — Measured 열 원본 대조용:
+{meas_list}
+
 ## 검증 항목
 
 1. **교재 Table 구조 대조**: 원본 Table의 행/열 라벨과 결과보고서 Table 구조가 일치하는지 확인
 2. **임의 열 추가/누락 검증**: 교재에 없는 `Calculated`, `Measured`, `%(Difference)` 열이 추가되었거나, 교재에 있는 행/열이 빠졌으면 FAIL
-3. **오차율 공식**: 교재 Table이 계산값 비교 구조를 요구하는 경우에만 `|Calculated - Measured| / Calculated × 100 (%)` 계산 정확성 확인
-4. **Calculated 재계산**: 교재 Table이 계산값 비교 구조를 요구하는 경우에만 실측 소자값으로 올바르게 재계산되었는지 확인
-5. **오차 원인 분석**: 저항 ±5% 등 허용 오차 범위 고려 여부
+3. **Measured 열 원본 대조**: `input/measured/` 의 측정값 파일이 있으면 읽고, 결과보고서 Table의 Measured 열 값이 원본 측정값과 일치하는지 1:1 비교 (옮겨 적기 누락·오기·단위 변환 오류 발견 시 FAIL). 측정값 파일이 없으면 "측정값 파일 없음 — 원본 대조 생략"으로 표기
+4. **오차율 공식**: 교재 Table이 계산값 비교 구조를 요구하는 경우에만 `|Calculated - Measured| / Calculated × 100 (%)` 계산 정확성 확인
+5. **Calculated 재계산**: 교재 Table이 계산값 비교 구조를 요구하는 경우에만 실측 소자값으로 올바르게 재계산되었는지 확인
+6. **오차 원인 분석**: 저항 ±5% 등 허용 오차 범위 고려 여부
 
 ## 출력 형식
 
 검토 결과를 `{output_dir}/result_review.md` 에 저장하세요.
 마지막 줄은 반드시 `최종 판정: PASS` 또는 `최종 판정: FAIL` 형식으로 끝내세요.
+측정값 파일이 존재하지 않는 것은 FAIL 사유가 아닙니다. 단, 파일이 있는데 보고서 Measured 값과 다르면 FAIL입니다.
 """
 
 

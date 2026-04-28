@@ -28,7 +28,8 @@ command: result-review
 
 ### Step 1: 보고서 읽기
 
-하네스가 지정한 결과보고서, 예비보고서, 교재 스캔본(`input/book/`)을 읽는다.
+하네스가 지정한 결과보고서, 예비보고서, 교재 스캔본(`input/book/`), 측정값 파일(`input/measured/*측정값.md`)을 읽는다.
+측정값 파일이 없으면 Measured 열 원본 대조는 생략한다 (이는 FAIL 사유가 아니다).
 
 ### Step 2: 교재 Table 구조 검증
 
@@ -43,7 +44,15 @@ command: result-review
 - **Table 16.5**는 `t(s)` 시간 열과 `v_C`, `v_R` 행을 가져야 한다. `v_R`는 각 시간에서 `E - v_C`로 계산되어야 하며, `Calculated`, `Measured`, `%(Difference)` 열이 있으면 FAIL이다.
 - **Table 16.6**은 `1τ`, `5τ` 열과 `v_C` 행 구조여야 한다. `Calculated`, `Measured`, `%(Difference)` 열이 있으면 FAIL이다.
 
-### Step 3: Calculated 값 재계산 검증
+### Step 3: Measured 열 원본 대조
+
+`input/measured/*측정값.md` 파일이 있으면, 결과보고서 Table의 Measured 열 값이 원본 측정값과 일치하는지 1:1 비교한다.
+- 옮겨 적기 누락·오기·단위 변환 오류(예: mA ↔ A, V ↔ mV)를 확인한다.
+- 소수점 자릿수가 원본과 동일한지 확인한다.
+- 측정값 파일에 있는 행/항목이 결과보고서에 누락되면 FAIL이다.
+- 측정값 파일이 없으면 "측정값 파일 없음 — 원본 대조 생략"으로 표기하고 다음 단계로 진행한다 (이는 FAIL 사유가 아니다).
+
+### Step 4: Calculated 값 재계산 검증
 
 교재 Table이 계산값 비교 구조를 요구하는 경우에만, 결과보고서의 Calculated 열이 **실측 소자값을 사용하여 올바르게 계산**되었는지 확인한다.
 - 결과보고서에 명시된 실측 소자값(예: R_1 = 1.19 kΩ)을 사용하여 직접 재계산한다.
@@ -51,7 +60,7 @@ command: result-review
 - 불일치 항목: 어떤 Table의 어떤 값이 다른지 구체적으로 기록한다.
 - 교재 원형상 Calculated 열이 없어야 하는 Table은 계산 검산 대상이 아니라 Table 구조 오류로 판정한다.
 
-### Step 4: 오차율 계산 검증
+### Step 5: 오차율 계산 검증
 
 교재 Table이 계산값 비교 구조를 요구하는 경우에만 각 Table의 오차율 계산을 직접 재계산한다.
 
@@ -65,7 +74,7 @@ command: result-review
 - %(Difference) > 20%인 항목은 별도로 표시하여 사용자에게 측정값 재확인을 권고한다.
 - 교재 원형상 %(Difference) 열이 없어야 하는 Table은 오차율 검산 대상이 아니라 Table 구조 오류로 판정한다.
 
-### Step 5: 결과 저장
+### Step 6: 결과 저장
 
 검토 결과를 하네스가 지정한 경로(`output/result_review_data.md`)에 저장한다.
 
@@ -76,6 +85,7 @@ command: result-review
 
 ### [Table 번호]
 - Table 구조: PASS 또는 FAIL (교재 원형 대비 행/열 누락, 임의 열 추가 여부)
+- Measured 원본 대조: PASS 또는 FAIL (대조 불가 시 "측정값 파일 없음")
 - Calculated 재계산: PASS 또는 FAIL (오류 내용)
 - %(Difference) 계산: PASS 또는 FAIL (오류 내용 및 올바른 값)
 
@@ -154,3 +164,4 @@ command: result-review
 - 교재에 있는 파생값 행/열을 누락한 Table은 수치가 맞아도 FAIL이다.
 - Calculated가 0일 때 오차율 공식을 그대로 적용하면 0으로 나눔 오류가 발생한다. 이 경우 절대 오차만 기록하는 것이 맞다.
 - **Predicted ≠ Calculated**: 예비보고서의 Predicted(공칭값 기준)와 결과보고서의 Calculated(실측값 기준)가 다른 것은 정상이다. 이를 오류로 판정하지 마라.
+- 측정값 파일이 존재하지 않는 것은 FAIL 사유가 아니다. 단, 파일이 있는데 보고서 Measured 값이 다르면 FAIL이다.
