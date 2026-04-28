@@ -114,6 +114,10 @@ def test_result_generator_prompt_requires_book_table_structure() -> None:
     assert "교재 Table 원형 구조를 최상위 기준" in prompt
     assert "교재에 없는 `Calculated`, `Measured`, `%(Difference)` 열을 임의로 추가하지 마세요" in prompt
     assert "`v_R = E - v_C`" in prompt
+    assert "측정값에서 좌표나 파생값을 산출" in prompt
+    assert "`X = R`, `V = E/√2`, `τ = RC` 같은 이론식은 이론 기준값" in prompt
+    assert "측정 기반 산출값을 덮어쓰지 마세요" in prompt
+    assert "측정 기반 산출값인지, 명판값 기반 이론 계산인지, 실측 소자값 기반 재계산인지" in prompt
 
 
 def test_result_reviewer_prompt_checks_book_table_structure(tmp_path: Path) -> None:
@@ -126,7 +130,28 @@ def test_result_reviewer_prompt_checks_book_table_structure(tmp_path: Path) -> N
     assert "교재 Table 구조 대조" in prompt
     assert "임의 열 추가/누락 검증" in prompt
     assert "파생값 검증" in prompt
+    assert "측정 기반 산출값 검증" in prompt
+    assert "인접 측정점 보간 또는 명시된 판독 기준" in prompt
+    assert "`X = R`, `V = E/√2`, `τ = RC` 같은 이론 기준값으로 단정" in prompt
     assert "Table 구조: PASS 또는 FAIL" in prompt
+
+
+def test_result_reviewer_phase2_prompt_checks_measured_vs_theory_discussion(tmp_path: Path) -> None:
+    report = tmp_path / "15주차_결과보고서.md"
+    report.write_text("# 15주차 결과보고서\n\n# 실험 결과\n\n데이터\n\n# 고찰\n\n분석\n", encoding="utf-8")
+
+    prompt = prompts._build_result_reviewer_phase2_prompt(output_dir=tmp_path)
+
+    assert "측정값-이론값 구분" in prompt
+    assert "측정 기반 산출값과 이론 기준값의 차이를 단순 오류로 처리하지 않고" in prompt
+    assert "소자 오차, 계측 한계, 그래프 판독 오차" in prompt
+
+
+def test_result_generator_phase2_prompt_requires_measured_vs_theory_discussion() -> None:
+    prompt = prompts._build_result_generator_phase2_prompt()
+
+    assert "측정 기반 산출값과 이론 기준값이 다르면 단순 계산 오류로 단정하지 말고" in prompt
+    assert "보간값·판독값·이론 기준값을 구분" in prompt
 
 
 def test_result_skills_lock_table_16_5_and_16_6_structure() -> None:
@@ -146,3 +171,20 @@ def test_result_skills_lock_table_16_5_and_16_6_structure() -> None:
         assert "Table 16.6" in skill_text
         assert "`1τ`, `5τ`" in skill_text
         assert "Calculated`, `Measured`, `%(Difference)` 열" in skill_text
+
+
+def test_result_skills_distinguish_measured_derived_values_from_theory() -> None:
+    project_dir = Path(__file__).resolve().parents[1]
+    report_skill = (project_dir / "skills" / "result-report" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    review_skill = (project_dir / "skills" / "result-review" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "측정 기반 산출값과 이론 기준값 구분" in report_skill
+    assert "측정값에서 좌표나 파생값을 산출" in report_skill
+    assert "`X = R`, `V = E/√2`, `τ = RC` 같은 이상식" in report_skill
+    assert "측정 기반 산출값과 이론 기준값 검증" in review_skill
+    assert "관계식만으로 채웠으면 FAIL" in review_skill
+    assert "소자 오차, 계측 한계, 그래프 판독 오차" in review_skill
