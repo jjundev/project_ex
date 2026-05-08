@@ -3,6 +3,18 @@
 ## 개요
 교재 스캔본, 강의노트, 실험 영상 STT를 기반으로 예비보고서/결과보고서를 자동 생성한다.
 
+## 첫 셋업
+
+```bash
+# 1. 의존성 설치 (Claude + Codex 양쪽)
+pip install -r requirements.txt -r requirements-codex.txt
+
+# 2. Codex CLI 로그인 (gpt-quality preset 사용 시)
+codex login
+```
+
+기본 preset은 `gpt-quality` (Codex Python SDK + gpt-5.5)다. Claude Opus/Sonnet으로 강제하려면 매 실행에 `--model-preset claude-default` 를 붙인다.
+
 ## 사용 가능 커맨드
 
 ```bash
@@ -20,6 +32,9 @@ python harness.py --to pre-reviewer --max-rounds 2
 
 # 실행 경로 미리보기 (실제 실행 안 함)
 python harness.py --dry-run
+
+# Claude (Opus/Sonnet) 강제 사용
+python harness.py --model-preset claude-default
 ```
 
 ### 파이프라인 역할 순서

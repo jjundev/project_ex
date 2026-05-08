@@ -1,0 +1,4 @@
+# Codex Python SDK (experimental, alpha)
+# 검증 commit: 317213fd33 (2026-05-08)
+# Python 3.10+ 필요
+openai-codex-app-server-sdk @ git+https://github.com/openai/codex.git@317213fd33#subdirectory=sdk/python

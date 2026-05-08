@@ -4,6 +4,8 @@ import re
 import sys
 from pathlib import Path
 
+from harness_core.config import DEFAULT_MODEL_PRESET, MODEL_PRESETS
+
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 HARNESS = PROJECT_DIR / "harness.py"
 NOTION_DEPLOY = PROJECT_DIR / "harness_core" / "notion_deploy.py"
@@ -23,6 +25,23 @@ ROLE_MODEL = {
     "result-generator": "Opus",
     "result-reviewer": "Sonnet",
 }
+
+# preset name → 옵션 라벨
+PRESET_LABEL = {
+    "claude-default": "Claude (Opus/Sonnet)",
+    "gpt-quality": "GPT (gpt-5.5)",
+}
+
+
+def presets_for_html() -> dict[str, dict]:
+    """root HTML에 임베드할 preset 데이터 (provider, role_models)."""
+    return {
+        name: {
+            "provider": preset.provider,
+            "role_models": dict(preset.role_models),
+        }
+        for name, preset in MODEL_PRESETS.items()
+    }
 
 ANSI = re.compile(r"\033\[[0-9;]*m")
 PHASE_START_RE = re.compile(r"── ((?:결과보고서 )?Phase \d+): (.+?) ──")
