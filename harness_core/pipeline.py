@@ -119,14 +119,20 @@ def _log_input_summary(files: dict[str, list[str]]) -> None:
     """발견된 입력 파일 목록을 로그로 출력한다."""
     total = sum(len(v) for v in files.values())
     _log(f"입력 자료 {total}개 발견")
-    labels = {"book": "교재 스캔본(이미지)", "note": "강의노트(PDF)", "stt": "STT(텍스트)"}
+    labels = {
+        "book": "교재 스캔본(이미지)",
+        "note": "강의노트(PDF)",
+        "stt": "STT(텍스트)",
+        "exercise": "연습 문제(이미지/PDF/MD)",
+    }
     for key, paths in files.items():
+        label = labels.get(key, key)
         if paths:
-            _log(f"  {labels[key]}: {len(paths)}개")
+            _log(f"  {label}: {len(paths)}개")
             for p in paths:
                 _log(f"    · {Path(p).name}")
         else:
-            _log(f"  {labels[key]}: 없음")
+            _log(f"  {label}: 없음")
 
 
 async def run_role(role: str, extra: str = "", prompt_override: str | None = None) -> str:
@@ -544,8 +550,8 @@ async def run_pipeline(
     _log(f"파이프라인 시작: {' → '.join(roles)}")
     pipeline_start = time.monotonic()
 
-    # pre-generator가 포함된 경우 입력 파일 목록 출력
-    if "pre-generator" in roles:
+    # pre-generator 또는 result-generator가 포함된 경우 입력 파일 목록 출력
+    if "pre-generator" in roles or "result-generator" in roles:
         _log_input_summary(collect_docx_files())
 
     i = 0

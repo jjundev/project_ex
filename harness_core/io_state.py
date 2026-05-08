@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from .config import BOOK_DIR, MEASURED_DIR, NOTE_DIR, OUTPUT_DIR, STT_DIR
+from .config import BOOK_DIR, EXERCISE_DIR, MEASURED_DIR, NOTE_DIR, OUTPUT_DIR, STT_DIR
 
 
 def _has_expected_values_section(report_path: Path) -> bool:
@@ -127,10 +127,12 @@ def collect_docx_files(
     book_dir: Path = BOOK_DIR,
     note_dir: Path = NOTE_DIR,
     stt_dir: Path = STT_DIR,
+    exercise_dir: Path = EXERCISE_DIR,
 ) -> dict[str, list[str]]:
     """input/ 하위 파일 목록을 수집하여 반환한다."""
-    result: dict[str, list[str]] = {"book": [], "note": [], "stt": []}
+    result: dict[str, list[str]] = {"book": [], "note": [], "stt": [], "exercise": []}
     image_exts = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"}
+    exercise_exts = image_exts | {".pdf", ".md", ".txt"}
 
     if book_dir.exists():
         result["book"] = sorted(
@@ -140,6 +142,10 @@ def collect_docx_files(
         result["note"] = sorted(str(f) for f in note_dir.glob("*") if f.is_file())
     if stt_dir.exists():
         result["stt"] = sorted(str(f) for f in stt_dir.glob("*.txt") if f.is_file())
+    if exercise_dir.exists():
+        result["exercise"] = sorted(
+            str(f) for f in exercise_dir.glob("*") if f.is_file() and f.suffix.lower() in exercise_exts
+        )
 
     return result
 

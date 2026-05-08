@@ -16,6 +16,7 @@ BOOK_DIR = INPUT_DIR / "book"
 NOTE_DIR = INPUT_DIR / "note"
 STT_DIR = INPUT_DIR / "stt"
 MEASURED_DIR = INPUT_DIR / "measured"
+EXERCISE_DIR = INPUT_DIR / "exercise"
 OUTPUT_DIR = PROJECT_DIR / "output"
 SKILLS_DIR = PROJECT_DIR / "skills"
 
