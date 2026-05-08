@@ -211,6 +211,45 @@ def extract_fail_items(review_path: Path) -> str:
     return "\n".join(l for l in lines if re.search(r":\s*FAIL", l))
 
 
+def extract_pass_sections(review_path: Path) -> list[str]:
+    """검토 파일에서 판정 PASS인 섹션의 헤더 이름만 추출한다.
+
+    `### {섹션명}` 다음에 같은 섹션 블록 안에서 `판정: PASS`가 나오고
+    `판정: FAIL`이 나오지 않는 경우의 섹션명을 반환한다.
+    pre_review_theory.md 형식 (실험 목적 / 실험 준비물 / 실험 이론) 전용.
+    """
+    if not review_path.exists():
+        return []
+
+    lines = review_path.read_text(encoding="utf-8").splitlines()
+    pass_sections: list[str] = []
+    current: str | None = None
+    has_pass = False
+    has_fail = False
+
+    def flush() -> None:
+        nonlocal current, has_pass, has_fail
+        if current is not None and has_pass and not has_fail:
+            pass_sections.append(current)
+        current = None
+        has_pass = False
+        has_fail = False
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("### "):
+            flush()
+            current = stripped[4:].strip()
+        elif current is not None:
+            if re.search(r"판정\s*:\s*FAIL", stripped):
+                has_fail = True
+            elif re.search(r"판정\s*:\s*PASS", stripped):
+                has_pass = True
+    flush()
+
+    return pass_sections
+
+
 def _reserve_archive_path(
     base_archive_path: Path,
     now: Callable[[], datetime] | None = None,
