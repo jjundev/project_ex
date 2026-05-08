@@ -48,8 +48,8 @@ python harness.py --model-preset claude-default
 | Phase 1 검토 | `pre-reviewer` | 이론 섹션 완성도 검증 → `pre_review_theory.md` | Sonnet |
 | Phase 2 생성 | `pre-generator` | 예상 결과 값 추가 | Opus |
 | Phase 2 검토 | `pre-reviewer` | KVL/KCL 계산 검증 → `pre_review.md` | Sonnet |
-| Phase 1 생성 | `result-generator` | 실험 결과 섹션 작성 (연습 문제 미포함) | Opus |
-| Phase 1 검토 | `result-reviewer` | %(Difference) 수치 검증 → `result_review_data.md` | Sonnet |
+| Phase 1 생성 | `result-generator` | 실험 결과 섹션 + 연습 문제 섹션 작성 (`input/exercise/` 있을 때) | Opus |
+| Phase 1 검토 | `result-reviewer` | %(Difference) 수치 검증 + 연습 문제 9개 항목 검증 → `result_review_data.md` | Sonnet |
 | Phase 2 생성 | `result-generator` | 고찰 섹션 추가 | Opus |
 | Phase 2 검토 | `result-reviewer` | 고찰 품질 검토 → `result_review.md` | Sonnet |
 
@@ -62,6 +62,7 @@ python harness.py --model-preset claude-default
   - `note/` : 강의노트 PDF (이론, 공식)
   - `stt/` : 실험 영상 STT (`{ch}-{part}.txt`)
   - `measured/` : 실제 실험에서 측정한 값 (`{N}주차_측정값.md`)
+  - `exercise/` : 연습 문제 자료 (선택, KakaoTalk 이미지/PDF/MD/텍스트). 폴더 비어있으면 # 연습 문제 섹션 자동 생략.
 - `output/` : 생성된 보고서 (Markdown + PDF)
 
 ## 보고서 품질 기준
@@ -78,3 +79,7 @@ python harness.py --model-preset claude-default
    - 파일명 형식: `{챕터번호}-{파트번호}.txt` (예: `15-1.txt`)
 4. `measured/` 에 실험 측정값 저장 (결과보고서 작성 시 필요)
    - 파일명 형식: `{N}주차_측정값.md`
+5. `exercise/` 에 연습 문제 자료 저장 (선택)
+   - 허용 형식: `.jpg`, `.png`, `.jpeg`, `.gif`, `.bmp`, `.tiff`, `.webp`, `.pdf`, `.md`, `.txt`
+   - 파일명 자유 (KakaoTalk 타임스탬프 그대로 OK). agent가 vision으로 내용을 파싱하여 Ch 그룹 자동 추론.
+   - 폴더가 없거나 비어있으면 결과보고서에 `# 연습 문제` 섹션이 생성되지 않는다.
