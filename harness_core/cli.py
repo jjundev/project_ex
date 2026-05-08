@@ -4,7 +4,7 @@ import argparse
 import asyncio
 import sys
 
-from .config import ROLE_ORDER
+from .config import DEFAULT_MODEL_PRESET, MODEL_PRESETS, ROLE_ORDER
 from .pipeline import HarnessError, _log, _log_error, run_pipeline
 
 DOC = """기초전기실험 보고서 자동화 하네스 — claude_agent_sdk 기반 파이프라인 실행기.
@@ -61,6 +61,13 @@ def parse_args() -> argparse.Namespace:
         help="GAN 루프 시작 스텝 (p1g: Phase1 생성부터, p1r: Phase1 검토부터, "
              "p2g: Phase2 생성부터, p2r: Phase2 검토부터). default: p1g",
     )
+    parser.add_argument(
+        "--model-preset",
+        dest="model_preset",
+        default=DEFAULT_MODEL_PRESET,
+        choices=list(MODEL_PRESETS.keys()),
+        help=f"모델 프리셋 (default: {DEFAULT_MODEL_PRESET})",
+    )
     return parser.parse_args()
 
 
@@ -75,6 +82,8 @@ def main() -> None:
                 max_rounds=args.max_rounds,
                 dry_run=args.dry_run,
                 start_step=args.start_step,
+                preset=MODEL_PRESETS[args.model_preset],
+                preset_name=args.model_preset,
             )
         )
     except HarnessError as e:

@@ -1,10 +1,22 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 import time
 from pathlib import Path
 
-from .config import INPUT_DIR, MODEL_SONNET, OUTPUT_DIR, PROJECT_DIR, ROLE_MODELS, ROLE_ORDER, SKILL_PATHS
+from .config import (
+    DEFAULT_MODEL_PRESET,
+    INPUT_DIR,
+    MODEL_PRESETS,
+    MODEL_SONNET,
+    ModelPreset,
+    OUTPUT_DIR,
+    PROJECT_DIR,
+    ROLE_MODELS,
+    ROLE_ORDER,
+    SKILL_PATHS,
+)
 from .io_state import (
     _archive_if_exists,
     _find_measurements,
@@ -32,6 +44,9 @@ except ModuleNotFoundError:
     ResultMessage = None  # type: ignore[assignment]
     SystemMessage = None  # type: ignore[assignment]
     query = None  # type: ignore[assignment]
+
+# 활성 preset (run_pipeline 진입 시 설정)
+_ACTIVE_PRESET: ModelPreset = MODEL_PRESETS[DEFAULT_MODEL_PRESET]
 
 
 class HarnessError(Exception):
@@ -85,13 +100,13 @@ def load_skill(role: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def make_options(role: str) -> ClaudeAgentOptions:
+def make_options(role: str, model: str | None = None) -> ClaudeAgentOptions:
     """역할에 맞는 ClaudeAgentOptions를 반환한다."""
     _ensure_sdk_available()
 
-    model = ROLE_MODELS.get(role, MODEL_SONNET)
+    resolved_model = model or ROLE_MODELS.get(role, MODEL_SONNET)
     return ClaudeAgentOptions(
-        model=model,
+        model=resolved_model,
         system_prompt=load_skill(role),
         cwd=str(PROJECT_DIR),
         allowed_tools=["Read", "Write", "Edit", "Glob", "Grep", "Bash"],
@@ -115,20 +130,35 @@ def _log_input_summary(files: dict[str, list[str]]) -> None:
 
 
 async def run_role(role: str, extra: str = "", prompt_override: str | None = None) -> str:
-    """단일 역할을 claude_agent_sdk query()로 실행한다."""
-    _ensure_sdk_available()
-
+    """활성 preset의 provider에 따라 _run_role_claude / _run_role_codex로 분기한다."""
     try:
         prompt = prompt_override if prompt_override is not None else build_prompt(role, extra)
     except ValueError as e:
         raise HarnessError(str(e)) from e
+
+    preset = _ACTIVE_PRESET
+    model = preset.role_models.get(role)
+    if model is None:
+        raise HarnessError(f"preset '{preset}'에 role '{role}' 모델이 없습니다")
+
+    if preset.provider == "claude":
+        return await _run_role_claude(role, prompt, model)
+    if preset.provider == "codex":
+        reasoning = (preset.role_reasoning or {}).get(role, "high")
+        return await _run_role_codex(role, prompt, model, reasoning)
+    raise HarnessError(f"알 수 없는 provider: {preset.provider}")
+
+
+async def _run_role_claude(role: str, prompt: str, model: str) -> str:
+    """Claude Agent SDK 경로로 단일 역할을 실행한다."""
+    _ensure_sdk_available()
 
     _log(f"▶ {role} 시작")
     start = time.monotonic()
 
     result_text = ""
 
-    async for msg in query(prompt=prompt, options=make_options(role)):
+    async for msg in query(prompt=prompt, options=make_options(role, model)):
         if isinstance(msg, SystemMessage) and msg.subtype == "init":
             pass
         elif isinstance(msg, ResultMessage):
@@ -147,6 +177,126 @@ async def run_role(role: str, extra: str = "", prompt_override: str | None = Non
             )
 
     return result_text
+
+
+async def _run_role_codex(role: str, prompt: str, model: str, reasoning: str) -> str:
+    """Codex Python SDK 경로로 단일 역할을 실행한다."""
+    try:
+        from codex_app_server import AppServerConfig, AskForApproval, AsyncCodex, SandboxMode
+    except ModuleNotFoundError as e:
+        raise HarnessError(_codex_install_help()) from e
+
+    _log(f"▶ {role} 시작")
+    start = time.monotonic()
+
+    cfg = AppServerConfig(codex_bin=_resolve_codex_bin())
+    async with AsyncCodex(config=cfg) as codex:
+        thread = await codex.thread_start(
+            model=model,
+            cwd=str(PROJECT_DIR),
+            developer_instructions=load_skill(role),
+            approval_policy=AskForApproval.model_validate("never"),
+            sandbox=SandboxMode.workspace_write,
+            config={"model_reasoning_effort": reasoning},
+        )
+        result = await thread.run(prompt)
+
+    elapsed = time.monotonic() - start
+    final = (result.final_response or "").strip()
+
+    usage = result.usage
+    usage_str = ""
+    if usage is not None and usage.total is not None:
+        usage_str = f", in:{usage.total.input_tokens} out:{usage.total.output_tokens}"
+
+    _log(f"✓ {role} 완료 ({elapsed:.0f}s, codex{usage_str})")
+    return final
+
+
+def _codex_install_help() -> str:
+    return (
+        "Codex Python SDK를 import할 수 없습니다. 다음을 확인하세요:\n"
+        "  1. Python 3.10+ 사용\n"
+        "  2. pip install -r requirements-codex.txt\n"
+        "  3. codex login (ChatGPT 로그인)\n"
+        "  4. 우회 옵션: --model-preset claude-default"
+    )
+
+
+def _resolve_codex_bin() -> str:
+    """시스템 codex CLI 바이너리 경로를 검출한다.
+
+    검출 우선순위:
+      1. 환경변수 CODEX_BIN
+      2. %LOCALAPPDATA%\\OpenAI\\Codex\\bin\\codex.exe (Windows 표준 설치 위치)
+      3. PATH 에서 'codex' 검색
+    """
+    import os
+    import shutil
+
+    env = os.environ.get("CODEX_BIN")
+    if env and Path(env).exists():
+        return env
+
+    if sys.platform.startswith("win"):
+        local_app = os.environ.get("LOCALAPPDATA")
+        if local_app:
+            candidate = Path(local_app) / "OpenAI" / "Codex" / "bin" / "codex.exe"
+            if candidate.exists():
+                return str(candidate)
+
+    on_path = shutil.which("codex")
+    if on_path:
+        return on_path
+
+    raise HarnessError(
+        "Codex CLI 바이너리를 찾을 수 없습니다. 다음 중 하나로 해결:\n"
+        "  1. Codex Desktop 또는 codex CLI 설치 (https://github.com/openai/codex)\n"
+        "  2. CODEX_BIN 환경변수에 codex.exe 절대 경로 지정\n"
+        "  3. PATH 에 codex 가 보이도록 설정\n"
+        "  4. 우회 옵션: --model-preset claude-default"
+    )
+
+
+async def _codex_healthcheck(preset: ModelPreset, *, timeout: float = 30.0) -> None:
+    """Codex 환경(SDK import / app-server / 로그인 / 모델 가용)을 짧게 검증한다."""
+    if preset.provider != "codex":
+        return
+
+    try:
+        from codex_app_server import AppServerConfig, AskForApproval, AsyncCodex, SandboxMode
+    except ModuleNotFoundError as e:
+        raise HarnessError(_codex_install_help()) from e
+
+    # 첫 role의 모델로 ping
+    first_role = ROLE_ORDER[0]
+    model = preset.role_models.get(first_role)
+    cfg = AppServerConfig(codex_bin=_resolve_codex_bin())
+
+    async def _ping() -> None:
+        async with AsyncCodex(config=cfg) as codex:
+            thread = await codex.thread_start(
+                model=model,
+                cwd=str(PROJECT_DIR),
+                approval_policy=AskForApproval.model_validate("never"),
+                sandbox=SandboxMode.read_only,
+            )
+            await thread.run("Reply with the single word: ok")
+
+    try:
+        await asyncio.wait_for(_ping(), timeout=timeout)
+    except asyncio.TimeoutError as e:
+        raise HarnessError(
+            f"Codex preflight 30초 timeout. {_codex_install_help()}"
+        ) from e
+    except HarnessError:
+        raise
+    except Exception as e:
+        raise HarnessError(
+            f"Codex preflight 실패: {type(e).__name__}: {e}\n{_codex_install_help()}"
+        ) from e
+
+    _log(f"Codex preflight OK (model={model})")
 
 
 async def run_gan_loop(max_rounds: int = 3, start_step: str = "p1g") -> bool:
@@ -323,6 +473,8 @@ async def run_pipeline(
     max_rounds: int,
     dry_run: bool,
     start_step: str = "p1g",
+    preset: ModelPreset | None = None,
+    preset_name: str | None = None,
 ) -> None:
     """from_role 부터 to_role 까지 하네스 파이프라인을 실행한다."""
     if from_role not in ROLE_ORDER:
@@ -337,8 +489,20 @@ async def run_pipeline(
 
     roles = ROLE_ORDER[start_idx : end_idx + 1]
 
+    # 활성 preset 설정 (모듈 전역)
+    global _ACTIVE_PRESET
+    active_preset = preset if preset is not None else MODEL_PRESETS[DEFAULT_MODEL_PRESET]
+    active_name = preset_name or DEFAULT_MODEL_PRESET
+    _ACTIVE_PRESET = active_preset
+
     if dry_run:
         print("실행 경로:", " → ".join(roles))
+        print(f"preset: {active_name} (provider={active_preset.provider})")
+        for r in roles:
+            model = active_preset.role_models.get(r, "?")
+            reasoning = (active_preset.role_reasoning or {}).get(r) if active_preset.provider == "codex" else None
+            tail = f" (reasoning={reasoning})" if reasoning else ""
+            print(f"  {r}: {model}{tail}")
         has_pre_gan = "pre-generator" in roles and "pre-reviewer" in roles
         has_result_gan = "result-generator" in roles and "result-reviewer" in roles
         if has_pre_gan:
@@ -371,6 +535,11 @@ async def run_pipeline(
             raise HarnessError(
                 "결과보고서가 없습니다. 먼저 result-generator를 실행하여 결과보고서를 생성하세요."
             )
+
+    # Codex 환경 preflight (provider=codex 일 때만)
+    if active_preset.provider == "codex":
+        _log(f"Codex preflight 실행 중 (model={active_preset.role_models[ROLE_ORDER[0]]})...")
+        await _codex_healthcheck(active_preset)
 
     _log(f"파이프라인 시작: {' → '.join(roles)}")
     pipeline_start = time.monotonic()

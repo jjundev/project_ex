@@ -4,12 +4,21 @@ import re
 import threading
 from pathlib import Path
 
+from harness_core.config import DEFAULT_MODEL_PRESET, MODEL_PRESETS
+
 from .constants import HARNESS, NOTION_DEPLOY, PROJECT_DIR, PYTHON, _STEP_CLI_ARGS
+
+
+def _resolve_preset(name: str | None) -> str:
+    if name and name in MODEL_PRESETS:
+        return name
+    return DEFAULT_MODEL_PRESET
 
 
 def preview_text(qs: dict, *, get_state, subprocess_module) -> str:
     mode = qs.get("mode", ["pre"])[0]
     max_rounds = qs.get("rounds", ["3"])[0]
+    preset = _resolve_preset(qs.get("preset", [None])[0])
     detected = get_state(mode)
     step = detected.get("step") or "p1g"
     cli_roles = _STEP_CLI_ARGS.get(mode, _STEP_CLI_ARGS["pre"])
@@ -24,6 +33,8 @@ def preview_text(qs: dict, *, get_state, subprocess_module) -> str:
         max_rounds,
         "--start-step",
         step,
+        "--model-preset",
+        preset,
         "--dry-run",
     ]
     res = subprocess_module.run(cmd, capture_output=True, text=True, cwd=str(PROJECT_DIR))
@@ -65,6 +76,7 @@ def start_pipeline(
 
     mode = body.get("mode", "pre")
     max_rounds = body.get("maxRounds", 3)
+    preset = _resolve_preset(body.get("modelPreset"))
 
     # 최신 파일 상태 재감지
     detected = get_state(mode)
@@ -87,9 +99,17 @@ def start_pipeline(
         str(max_rounds),
         "--start-step",
         step,
+        "--model-preset",
+        preset,
     ]
 
+    provider = MODEL_PRESETS[preset].provider
     state.broadcast({"type": "clear"})
+    state.broadcast({
+        "type": "log",
+        "text": f"[harness] preset={preset} (provider={provider})\n",
+        "tag": "dim",
+    })
     state.broadcast({"type": "log", "text": f"$ {' '.join(cmd[2:])}\n\n", "tag": "dim"})
 
     state._stream_done = 0

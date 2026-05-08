@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import json
 
-from .constants import ROLE_LABEL, ROLE_MODEL, ROLE_ORDER
+from .constants import (
+    DEFAULT_MODEL_PRESET,
+    PRESET_LABEL,
+    ROLE_LABEL,
+    ROLE_MODEL,
+    ROLE_ORDER,
+    presets_for_html,
+)
 
 def _build_html() -> str:
     # pipeline pills
@@ -17,6 +24,14 @@ def _build_html() -> str:
         </div>''')
 
     roles_json = json.dumps(ROLE_ORDER, ensure_ascii=False)
+    presets_json = json.dumps(presets_for_html(), ensure_ascii=False)
+    default_preset = DEFAULT_MODEL_PRESET
+
+    # preset select options
+    preset_options = "\n".join(
+        f'<option value="{name}">{PRESET_LABEL.get(name, name)}</option>'
+        for name in presets_for_html().keys()
+    )
 
     return f"""<!DOCTYPE html>
 <html lang="ko">
@@ -159,6 +174,12 @@ input[type=number]:focus{{border-color:var(--blue)}}
             <label>GAN 최대</label>
             <input type="number" id="rounds" value="3" min="1" max="10">
           </div>
+          <div class="num-wrap">
+            <label>모델 프리셋</label>
+            <select id="model-preset" onchange="onPresetChange()" style="width:auto;padding:8px 12px">
+              {preset_options}
+            </select>
+          </div>
         </div>
       </div>
       <div id="notion-ui" style="display:none">
@@ -199,6 +220,8 @@ input[type=number]:focus{{border-color:var(--blue)}}
 
 <script>
 const ROLES   = {roles_json};
+const PRESETS = {presets_json};
+const DEFAULT_PRESET = "{default_preset}";
 let es = null;
 let selectedReport = null;
 let lastExitCode   = 0;
@@ -207,6 +230,34 @@ let phaseCardCount  = 0;
 let activePhasePill = null;
 let isStopping      = false;
 let selectedMode    = 'pre';
+
+function onPresetChange() {{
+  const v = document.getElementById('model-preset').value;
+  localStorage.setItem('model_preset', v);
+  updatePillModels(v);
+}}
+
+function updatePillModels(presetName) {{
+  const preset = PRESETS[presetName];
+  if (!preset) return;
+  ROLES.forEach(r => {{
+    const el = document.querySelector(`#pill-${{r}} .pill-model`);
+    if (el) el.textContent = preset.role_models[r] || '';
+  }});
+}}
+
+function initPreset() {{
+  const stored = localStorage.getItem('model_preset');
+  const valid  = stored && PRESETS[stored] ? stored : DEFAULT_PRESET;
+  const sel = document.getElementById('model-preset');
+  if (sel) sel.value = valid;
+  updatePillModels(valid);
+}}
+
+function currentPreset() {{
+  const sel = document.getElementById('model-preset');
+  return (sel && sel.value) || DEFAULT_PRESET;
+}}
 
 function setRunning(v) {{
   const stopBtn = document.getElementById('stop-btn');
@@ -492,6 +543,7 @@ async function doStart() {{
     await post('/start', {{
       mode: selectedMode,
       maxRounds: +document.getElementById('rounds').value,
+      modelPreset: currentPreset(),
     }});
   }}
 }}
@@ -508,13 +560,17 @@ async function doStop() {{
 async function doPreview() {{
   clearLog(); resetStages();
   const r = await fetch('/preview?mode=' + selectedMode
-    + '&rounds=' + document.getElementById('rounds').value);
+    + '&rounds=' + document.getElementById('rounds').value
+    + '&preset=' + encodeURIComponent(currentPreset()));
   createLogCard('미리보기');
   appendLog(await r.text(), 'dim');
 }}
 
 connectSSE();
-document.addEventListener('DOMContentLoaded', () => selectMode('pre'));
+document.addEventListener('DOMContentLoaded', () => {{
+  initPreset();
+  selectMode('pre');
+}});
 </script>
 </body>
 </html>"""
