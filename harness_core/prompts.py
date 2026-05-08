@@ -10,6 +10,7 @@ from .io_state import (
     _has_discussion_section,
     _latest_result_report,
     collect_docx_files,
+    extract_pass_sections,
 )
 
 
@@ -20,14 +21,42 @@ def _build_pre_generator_prompt(extra: str = "") -> str:
     exp_list = "\n".join(f"  - {f}" for f in files["stt"]) or "  (없음)"
 
     rework_section = ""
+    retry_section = ""
     if extra:
         rework_section = f"\n## 재작업 지시사항\n{extra}\n"
+
+        pre_reports = _find_pre_reports()
+        pre_list = "\n".join(f"  - {f}" for f in pre_reports) or "  (없음)"
+
+        archives = sorted(OUTPUT_DIR.glob("pre_review_theory_round*.md"))
+        latest_review = archives[-1] if archives else (OUTPUT_DIR / "pre_review_theory.md")
+        pass_sections = extract_pass_sections(latest_review)
+        pass_list = "\n".join(f"  - {s}" for s in pass_sections) or "  (없음)"
+
+        retry_section = f"""
+## 재작업 모드 (Phase 1 FAIL 후 재시도)
+
+처음부터 새로 작성하지 마세요. 기존 예비보고서를 읽고 FAIL 항목만 수정하세요.
+
+### 기존 예비보고서 (수정 대상)
+{pre_list}
+
+### 이전 검토에서 PASS된 섹션 (변경 금지)
+{pass_list}
+
+### 작업 방식
+1. 위 기존 예비보고서를 Read로 먼저 읽으세요.
+2. 위에 나열된 PASS 섹션은 절대 수정하지 마세요. 그대로 보존합니다.
+3. `재작업 지시사항`의 FAIL 항목만 해당 섹션에서 Edit으로 수정하세요.
+4. 수정에 필요한 경우에만 아래 입력 자료에서 관련 파일을 선택적으로 다시 읽으세요 (전체 재독 불필요).
+5. 같은 파일에 덮어쓰기로 저장하세요.
+"""
 
     return f"""아래 자료를 사용하여 예비보고서 **Phase 1** (실험 목적·준비물·이론)을 생성하세요.
 
 > **주의**: 이번 단계에서는 `## 예상 결과 값` 섹션을 작성하지 마세요.
 > 예상 결과 값은 이론 검토 통과 후 Phase 2에서 별도로 작성합니다.
-{rework_section}
+{rework_section}{retry_section}
 ## 입력 자료
 
 ### 교재 스캔본 (input/book/) — 이미지 파일
@@ -50,7 +79,7 @@ def _build_pre_generator_prompt(extra: str = "") -> str:
 
 ## 지시사항
 
-1. 위 자료를 **모두** 읽으세요. 파일을 건너뛰지 마세요.
+1. 위 자료를 **모두** 읽으세요. 파일을 건너뛰지 마세요. (재작업 모드인 경우 위 "작업 방식" 우선)
 2. STT는 보조 자료로만 사용하세요. STT에 강의노트·교재와 다른 실험 변형(전압 설정 변경, 추가 소자 결합 등)이 있어도 본문에 인용하거나 변형 표를 추가하지 마세요. 강의노트 기준으로 통일하여 작성합니다 (자세한 정책은 SKILL.md Step 1-4 참조).
 3. system prompt의 **Step 2-1 (실험 목적)**, **Step 2-2 (실험 준비물)**, **Step 2-3 (실험 이론)** 만 작성하세요.
 4. `## 예상 결과 값` 섹션은 작성하지 마세요 (Phase 2에서 작성).
@@ -213,15 +242,34 @@ def _build_result_generator_prompt(extra: str = "") -> str:
     )
 
     rework_section = ""
+    retry_section = ""
     if extra:
         rework_section = f"\n## 재작업 지시사항\n{extra}\n"
+
+        result_reports = _find_result_reports()
+        result_list = "\n".join(f"  - {f}" for f in result_reports) or "  (없음)"
+
+        retry_section = f"""
+## 재작업 모드 (Phase 1 FAIL 후 재시도)
+
+처음부터 새로 작성하지 마세요. 기존 결과보고서를 읽고 FAIL 항목만 수정하세요.
+
+### 기존 결과보고서 (수정 대상)
+{result_list}
+
+### 작업 방식
+1. 위 기존 결과보고서를 Read로 먼저 읽으세요.
+2. `재작업 지시사항`에 명시된 FAIL 항목만 Edit으로 수정하세요. FAIL 목록에 없는 Table/항목은 변경하지 마세요.
+3. 수정에 필요한 경우에만 아래 입력 자료(교재 Table 원형, 측정값)를 선택적으로 다시 읽으세요.
+4. 같은 파일에 덮어쓰기로 저장하세요.
+"""
 
     return f"""아래 자료를 사용하여 결과보고서 **Phase 1** (실험 결과)을 생성하세요.
 
 > **주의**: 이번 단계에서는 `# 고찰` 섹션을 작성하지 마세요.
 > 고찰은 실험 결과 검토 통과 후 Phase 2에서 별도로 작성합니다.
 > `# 연습 문제` 섹션도 작성하지 마세요.
-{rework_section}
+{rework_section}{retry_section}
 ## 입력 자료
 
 ### 예비보고서
@@ -237,6 +285,8 @@ def _build_result_generator_prompt(extra: str = "") -> str:
 {exp_list}
 
 ## 지시사항
+
+> 재작업 모드인 경우 위 "작업 방식"을 우선 적용하고, 아래 단계는 신규 작성 시에만 따르세요.
 
 1. 예비보고서를 읽어 예상값 테이블 구조를 파악하세요.
 2. `input/book/` 이미지를 다시 읽어 각 교재 Table의 원래 행/열 구조와 작성 요구사항을 확인하세요.
