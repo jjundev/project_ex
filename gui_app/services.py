@@ -4,7 +4,10 @@ import re
 import threading
 from pathlib import Path
 
-from harness_core.config import DEFAULT_MODEL_PRESET, MODEL_PRESETS
+from harness_core.config import (
+    DEFAULT_MODEL_PRESET,
+    MODEL_PRESETS,
+)
 
 from .constants import HARNESS, NOTION_DEPLOY, PROJECT_DIR, PYTHON, _STEP_CLI_ARGS
 
@@ -103,11 +106,11 @@ def start_pipeline(
         preset,
     ]
 
-    provider = MODEL_PRESETS[preset].provider
+    p = MODEL_PRESETS[preset]
     state.broadcast({"type": "clear"})
     state.broadcast({
         "type": "log",
-        "text": f"[harness] preset={preset} (provider={provider})\n",
+        "text": f"[harness] preset={preset} (generator={p.generator}, reviewer={p.reviewer})\n",
         "tag": "dim",
     })
     state.broadcast({"type": "log", "text": f"$ {' '.join(cmd[2:])}\n\n", "tag": "dim"})

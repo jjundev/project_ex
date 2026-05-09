@@ -4,7 +4,13 @@ import re
 import sys
 from pathlib import Path
 
-from harness_core.config import DEFAULT_MODEL_PRESET, MODEL_PRESETS
+from harness_core.config import (
+    DEFAULT_MODEL_PRESET,
+    MODEL_ALIASES,
+    MODEL_PRESETS,
+    ROLE_ORDER as _CFG_ROLE_ORDER,
+    alias_for_role,
+)
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 HARNESS = PROJECT_DIR / "harness.py"
@@ -34,11 +40,20 @@ PRESET_LABEL = {
 
 
 def presets_for_html() -> dict[str, dict]:
-    """root HTML에 임베드할 preset 데이터 (provider, role_models)."""
+    """root HTML에 임베드할 preset 데이터.
+
+    JS는 role별 alias 표시명을 보여주므로 4-role flat dict으로 펼쳐서 전달.
+    """
     return {
         name: {
-            "provider": preset.provider,
-            "role_models": dict(preset.role_models),
+            "generator": preset.generator,
+            "reviewer": preset.reviewer,
+            "role_models": {
+                role: (
+                    preset.generator if role.endswith("-generator") else preset.reviewer
+                )
+                for role in _CFG_ROLE_ORDER
+            },
         }
         for name, preset in MODEL_PRESETS.items()
     }
