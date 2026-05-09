@@ -4,6 +4,7 @@ import json
 
 from .constants import (
     DEFAULT_MODEL_PRESET,
+    MODEL_ALIASES,
     PRESET_LABEL,
     ROLE_LABEL,
     ROLE_MODEL,
@@ -33,12 +34,30 @@ def _build_html() -> str:
         for name in presets_for_html().keys()
     )
 
+    # per-category override options (first entry = "프리셋 기본값")
+    def _alias_option_label(alias: str) -> str:
+        mid = MODEL_ALIASES[alias].model_id
+        return f"{alias} ({mid})" if mid != alias else alias
+
+    alias_options = '<option value="">프리셋 기본값</option>\n' + "\n".join(
+        f'<option value="{alias}">{_alias_option_label(alias)}</option>'
+        for alias in MODEL_ALIASES.keys()
+    )
+
+    # JS map: alias → compact display label for pills
+    alias_display_json = json.dumps(
+        {alias: MODEL_ALIASES[alias].model_id.removeprefix("claude-")
+         for alias in MODEL_ALIASES},
+        ensure_ascii=False,
+    )
+
     return f"""<!DOCTYPE html>
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>보고서 자동화 하네스</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css">
 <style>
 :root {{
   --blue:#3182F6; --blue-d:#1B64DA;
@@ -61,7 +80,7 @@ h1{{font-size:26px;font-weight:800;letter-spacing:-.5px}}
 .field-desc{{font-size:12px;color:var(--muted);margin-top:4px;margin-bottom:12px}}
 select{{appearance:none;background:white;border:1.5px solid var(--border);
         border-radius:10px;padding:10px 16px;font-size:14px;color:var(--text);
-        cursor:pointer;font-family:inherit;width:200px;outline:none}}
+        cursor:pointer;font-family:'Pretendard',sans-serif;width:200px;outline:none}}
 select:focus{{border-color:var(--blue)}}
 .range-row{{display:flex;align-items:center;gap:10px}}
 .arrow{{font-size:15px;color:var(--muted);font-weight:600;padding:0 2px}}
@@ -90,6 +109,10 @@ hr{{border:none;border-top:1px solid var(--border);margin:20px 0}}
 .state-card.error{{background:#FEE8EA;color:var(--red)}}
 .num-wrap{{display:flex;align-items:center;gap:8px}}
 .num-wrap label{{font-size:13px;font-weight:700;color:var(--sub)}}
+details>summary{{list-style:none;cursor:pointer;font-size:13px;font-weight:700;
+                 color:var(--sub);padding:6px 0;user-select:none;outline:none}}
+details>summary::-webkit-details-marker{{display:none}}
+details[open]>summary{{color:var(--blue)}}
 input[type=number]{{width:62px;border:1.5px solid var(--border);border-radius:9px;
                    padding:8px 10px;font-size:14px;text-align:center;outline:none;
                    font-family:inherit}}
@@ -112,8 +135,8 @@ input[type=number]:focus{{border-color:var(--blue)}}
 .pipeline{{display:flex;align-items:center;gap:6px;flex-wrap:wrap}}
 .pill{{background:var(--log);border-radius:10px;padding:11px 16px;
        text-align:center;min-width:100px;transition:all .2s}}
-.pill-name{{display:block;font-size:13px;font-weight:700;color:var(--muted)}}
-.pill-model{{display:block;font-size:11px;color:var(--muted);margin-top:2px}}
+.pill-name{{display:block;font-size:13px;font-weight:700;color:var(--muted);font-family:'Pretendard',sans-serif}}
+.pill-model{{display:block;font-size:11px;color:var(--muted);margin-top:2px;font-family:'Pretendard',sans-serif}}
 .pill.active{{background:var(--blue)}}
 .pill.active .pill-name,.pill.active .pill-model{{color:#fff}}
 .pill.done{{background:var(--green)}}
@@ -181,6 +204,23 @@ input[type=number]:focus{{border-color:var(--blue)}}
             </select>
           </div>
         </div>
+        <details style="margin-top:12px">
+          <summary>⚙ 고급 설정 (카테고리별 모델 override)</summary>
+          <div class="opts-row" style="margin-top:10px">
+            <div class="num-wrap">
+              <label>Generator 모델</label>
+              <select id="generator-model" onchange="updatePillModels(currentPreset())" style="width:auto;padding:8px 12px">
+                {alias_options}
+              </select>
+            </div>
+            <div class="num-wrap">
+              <label>Reviewer 모델</label>
+              <select id="reviewer-model" onchange="updatePillModels(currentPreset())" style="width:auto;padding:8px 12px">
+                {alias_options}
+              </select>
+            </div>
+          </div>
+        </details>
       </div>
       <div id="notion-ui" style="display:none">
         <div class="field-label">배포할 보고서</div>
@@ -219,9 +259,10 @@ input[type=number]:focus{{border-color:var(--blue)}}
 </div>
 
 <script>
-const ROLES   = {roles_json};
-const PRESETS = {presets_json};
+const ROLES         = {roles_json};
+const PRESETS       = {presets_json};
 const DEFAULT_PRESET = "{default_preset}";
+const ALIAS_DISPLAY = {alias_display_json};
 let es = null;
 let selectedReport = null;
 let lastExitCode   = 0;
@@ -240,9 +281,16 @@ function onPresetChange() {{
 function updatePillModels(presetName) {{
   const preset = PRESETS[presetName];
   if (!preset) return;
+  const gSel = document.getElementById('generator-model');
+  const rSel = document.getElementById('reviewer-model');
+  const gOverride = gSel && gSel.value || null;
+  const rOverride = rSel && rSel.value || null;
   ROLES.forEach(r => {{
     const el = document.querySelector(`#pill-${{r}} .pill-model`);
-    if (el) el.textContent = preset.role_models[r] || '';
+    if (!el) return;
+    const isGen = r.endsWith('-generator');
+    const alias = isGen ? gOverride || preset.generator : rOverride || preset.reviewer;
+    el.textContent = ALIAS_DISPLAY[alias] || alias;
   }});
 }}
 
@@ -257,6 +305,16 @@ function initPreset() {{
 function currentPreset() {{
   const sel = document.getElementById('model-preset');
   return (sel && sel.value) || DEFAULT_PRESET;
+}}
+
+function currentGeneratorModel() {{
+  const sel = document.getElementById('generator-model');
+  return (sel && sel.value) || null;
+}}
+
+function currentReviewerModel() {{
+  const sel = document.getElementById('reviewer-model');
+  return (sel && sel.value) || null;
 }}
 
 function setRunning(v) {{
@@ -540,11 +598,16 @@ async function doStart() {{
   if (selectedMode === 'notion') {{
     await doDeployNotion();
   }} else {{
-    await post('/start', {{
+    const body = {{
       mode: selectedMode,
       maxRounds: +document.getElementById('rounds').value,
       modelPreset: currentPreset(),
-    }});
+    }};
+    const gm = currentGeneratorModel();
+    const rm = currentReviewerModel();
+    if (gm) body.generatorModel = gm;
+    if (rm) body.reviewerModel  = rm;
+    await post('/start', body);
   }}
 }}
 
@@ -559,9 +622,14 @@ async function doStop() {{
 
 async function doPreview() {{
   clearLog(); resetStages();
-  const r = await fetch('/preview?mode=' + selectedMode
+  let url = '/preview?mode=' + selectedMode
     + '&rounds=' + document.getElementById('rounds').value
-    + '&preset=' + encodeURIComponent(currentPreset()));
+    + '&preset=' + encodeURIComponent(currentPreset());
+  const gm = currentGeneratorModel();
+  const rm = currentReviewerModel();
+  if (gm) url += '&generatorModel=' + encodeURIComponent(gm);
+  if (rm) url += '&reviewerModel='  + encodeURIComponent(rm);
+  const r = await fetch(url);
   createLogCard('미리보기');
   appendLog(await r.text(), 'dim');
 }}
