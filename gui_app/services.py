@@ -22,6 +22,8 @@ def preview_text(qs: dict, *, get_state, subprocess_module) -> str:
     mode = qs.get("mode", ["pre"])[0]
     max_rounds = qs.get("rounds", ["3"])[0]
     preset = _resolve_preset(qs.get("preset", [None])[0])
+    generator_model = qs.get("generatorModel", [None])[0] or None
+    reviewer_model = qs.get("reviewerModel", [None])[0] or None
     detected = get_state(mode)
     step = detected.get("step") or "p1g"
     cli_roles = _STEP_CLI_ARGS.get(mode, _STEP_CLI_ARGS["pre"])
@@ -40,6 +42,10 @@ def preview_text(qs: dict, *, get_state, subprocess_module) -> str:
         preset,
         "--dry-run",
     ]
+    if generator_model:
+        cmd += ["--generator-model", generator_model]
+    if reviewer_model:
+        cmd += ["--reviewer-model", reviewer_model]
     res = subprocess_module.run(cmd, capture_output=True, text=True, cwd=str(PROJECT_DIR))
     return res.stdout or res.stderr or "결과 없음"
 
@@ -80,6 +86,8 @@ def start_pipeline(
     mode = body.get("mode", "pre")
     max_rounds = body.get("maxRounds", 3)
     preset = _resolve_preset(body.get("modelPreset"))
+    generator_model = body.get("generatorModel") or None
+    reviewer_model = body.get("reviewerModel") or None
 
     # 최신 파일 상태 재감지
     detected = get_state(mode)
@@ -105,12 +113,18 @@ def start_pipeline(
         "--model-preset",
         preset,
     ]
+    if generator_model:
+        cmd += ["--generator-model", generator_model]
+    if reviewer_model:
+        cmd += ["--reviewer-model", reviewer_model]
 
     p = MODEL_PRESETS[preset]
+    eff_gen = generator_model or p.generator
+    eff_rev = reviewer_model or p.reviewer
     state.broadcast({"type": "clear"})
     state.broadcast({
         "type": "log",
-        "text": f"[harness] preset={preset} (generator={p.generator}, reviewer={p.reviewer})\n",
+        "text": f"[harness] preset={preset} (generator={eff_gen}, reviewer={eff_rev})\n",
         "tag": "dim",
     })
     state.broadcast({"type": "log", "text": f"$ {' '.join(cmd[2:])}\n\n", "tag": "dim"})
