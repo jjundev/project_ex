@@ -43,9 +43,6 @@ SKILLS_DIR = _config.SKILLS_DIR
 # ---------------------------------------------------------------------------
 
 ROLE_ORDER = _config.ROLE_ORDER
-MODEL_OPUS = _config.MODEL_OPUS
-MODEL_SONNET = _config.MODEL_SONNET
-ROLE_MODELS = _config.ROLE_MODELS
 SKILL_PATHS = _config.SKILL_PATHS
 
 

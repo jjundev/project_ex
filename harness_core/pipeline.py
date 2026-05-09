@@ -8,14 +8,16 @@ from pathlib import Path
 from .config import (
     DEFAULT_MODEL_PRESET,
     INPUT_DIR,
+    MODEL_ALIASES,
     MODEL_PRESETS,
-    MODEL_SONNET,
+    ModelAlias,
     ModelPreset,
     OUTPUT_DIR,
     PROJECT_DIR,
-    ROLE_MODELS,
     ROLE_ORDER,
     SKILL_PATHS,
+    alias_for_role,
+    role_to_category,
 )
 from .io_state import (
     _archive_if_exists,
@@ -100,13 +102,12 @@ def load_skill(role: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def make_options(role: str, model: str | None = None) -> ClaudeAgentOptions:
+def make_options(role: str, model: str) -> ClaudeAgentOptions:
     """역할에 맞는 ClaudeAgentOptions를 반환한다."""
     _ensure_sdk_available()
 
-    resolved_model = model or ROLE_MODELS.get(role, MODEL_SONNET)
     return ClaudeAgentOptions(
-        model=resolved_model,
+        model=model,
         system_prompt=load_skill(role),
         cwd=str(PROJECT_DIR),
         allowed_tools=["Read", "Write", "Edit", "Glob", "Grep", "Bash"],
@@ -136,23 +137,22 @@ def _log_input_summary(files: dict[str, list[str]]) -> None:
 
 
 async def run_role(role: str, extra: str = "", prompt_override: str | None = None) -> str:
-    """활성 preset의 provider에 따라 _run_role_claude / _run_role_codex로 분기한다."""
+    """활성 preset에서 role의 카테고리를 보고 provider를 결정해 분기한다."""
     try:
         prompt = prompt_override if prompt_override is not None else build_prompt(role, extra)
     except ValueError as e:
         raise HarnessError(str(e)) from e
 
-    preset = _ACTIVE_PRESET
-    model = preset.role_models.get(role)
-    if model is None:
-        raise HarnessError(f"preset '{preset}'에 role '{role}' 모델이 없습니다")
+    try:
+        alias = alias_for_role(_ACTIVE_PRESET, role)
+    except ValueError as e:
+        raise HarnessError(str(e)) from e
 
-    if preset.provider == "claude":
-        return await _run_role_claude(role, prompt, model)
-    if preset.provider == "codex":
-        reasoning = (preset.role_reasoning or {}).get(role, "high")
-        return await _run_role_codex(role, prompt, model, reasoning)
-    raise HarnessError(f"알 수 없는 provider: {preset.provider}")
+    if alias.provider == "claude":
+        return await _run_role_claude(role, prompt, alias.model_id)
+    if alias.provider == "codex":
+        return await _run_role_codex(role, prompt, alias.model_id, alias.reasoning or "high")
+    raise HarnessError(f"알 수 없는 provider: {alias.provider}")
 
 
 async def _run_role_claude(role: str, prompt: str, model: str) -> str:
@@ -264,9 +264,18 @@ def _resolve_codex_bin() -> str:
     )
 
 
-async def _codex_healthcheck(preset: ModelPreset, *, timeout: float = 30.0) -> None:
-    """Codex 환경(SDK import / app-server / 로그인 / 모델 가용)을 짧게 검증한다."""
-    if preset.provider != "codex":
+async def _codex_healthcheck(
+    preset: ModelPreset,
+    roles: list[str],
+    *,
+    timeout: float = 30.0,
+) -> None:
+    """활성 roles 중 codex provider가 하나라도 있으면 환경을 짧게 검증한다."""
+    codex_aliases = [
+        alias_for_role(preset, r) for r in roles
+        if alias_for_role(preset, r).provider == "codex"
+    ]
+    if not codex_aliases:
         return
 
     try:
@@ -274,9 +283,8 @@ async def _codex_healthcheck(preset: ModelPreset, *, timeout: float = 30.0) -> N
     except ModuleNotFoundError as e:
         raise HarnessError(_codex_install_help()) from e
 
-    # 첫 role의 모델로 ping
-    first_role = ROLE_ORDER[0]
-    model = preset.role_models.get(first_role)
+    # 첫 codex role의 모델로 ping
+    model = codex_aliases[0].model_id
     cfg = AppServerConfig(codex_bin=_resolve_codex_bin())
 
     async def _ping() -> None:
@@ -473,6 +481,50 @@ async def run_result_loop(max_rounds: int = 3, start_step: str = "p1g") -> bool:
     return False
 
 
+def _format_alias_line(category: str, alias_name: str, alias: ModelAlias) -> str:
+    """카테고리별 모델 alias 한 줄 포맷."""
+    pad = "generator" if category == "generator" else "reviewer "
+    suffix = f", reasoning={alias.reasoning}" if alias.reasoning else ""
+    return f"  {pad}: {alias_name:<8} [{alias.provider}/{alias.model_id}{suffix}]"
+
+
+def _print_dry_run_summary(
+    *,
+    roles: list[str],
+    preset: ModelPreset,
+    preset_name: str,
+    overrides: dict[str, str],
+    max_rounds: int,
+    start_step: str,
+) -> None:
+    """dry-run 모드에서 카테고리 단위 요약을 출력한다."""
+    print("실행 경로:", " → ".join(roles))
+
+    if overrides:
+        ov_str = ", ".join(f"{k}={v}" for k, v in overrides.items())
+        print(f"preset: {preset_name} (overrides: {ov_str})")
+    else:
+        print(f"preset: {preset_name}")
+
+    categories_in_play = {role_to_category(r) for r in roles}
+    if "generator" in categories_in_play:
+        gen_alias = MODEL_ALIASES[preset.generator]
+        print(_format_alias_line("generator", preset.generator, gen_alias))
+    if "reviewer" in categories_in_play:
+        rev_alias = MODEL_ALIASES[preset.reviewer]
+        print(_format_alias_line("reviewer", preset.reviewer, rev_alias))
+
+    has_pre_gan = "pre-generator" in roles and "pre-reviewer" in roles
+    has_result_gan = "result-generator" in roles and "result-reviewer" in roles
+    if has_pre_gan:
+        print("예비보고서 2단계: Phase 1 (이론) + Phase 2 (예상 결과 값)")
+    if has_result_gan:
+        print("결과보고서 2단계: Phase 1 (실험 결과) + Phase 2 (고찰)")
+    if has_pre_gan or has_result_gan:
+        print(f"최대 GAN 라운드 (Phase당): {max_rounds}")
+        print(f"시작 스텝: {start_step}")
+
+
 async def run_pipeline(
     from_role: str,
     to_role: str,
@@ -481,6 +533,7 @@ async def run_pipeline(
     start_step: str = "p1g",
     preset: ModelPreset | None = None,
     preset_name: str | None = None,
+    overrides: dict[str, str] | None = None,
 ) -> None:
     """from_role 부터 to_role 까지 하네스 파이프라인을 실행한다."""
     if from_role not in ROLE_ORDER:
@@ -502,22 +555,14 @@ async def run_pipeline(
     _ACTIVE_PRESET = active_preset
 
     if dry_run:
-        print("실행 경로:", " → ".join(roles))
-        print(f"preset: {active_name} (provider={active_preset.provider})")
-        for r in roles:
-            model = active_preset.role_models.get(r, "?")
-            reasoning = (active_preset.role_reasoning or {}).get(r) if active_preset.provider == "codex" else None
-            tail = f" (reasoning={reasoning})" if reasoning else ""
-            print(f"  {r}: {model}{tail}")
-        has_pre_gan = "pre-generator" in roles and "pre-reviewer" in roles
-        has_result_gan = "result-generator" in roles and "result-reviewer" in roles
-        if has_pre_gan:
-            print("예비보고서 2단계: Phase 1 (이론) + Phase 2 (예상 결과 값)")
-        if has_result_gan:
-            print("결과보고서 2단계: Phase 1 (실험 결과) + Phase 2 (고찰)")
-        if has_pre_gan or has_result_gan:
-            print(f"최대 GAN 라운드 (Phase당): {max_rounds}")
-            print(f"시작 스텝: {start_step}")
+        _print_dry_run_summary(
+            roles=roles,
+            preset=active_preset,
+            preset_name=active_name,
+            overrides=overrides or {},
+            max_rounds=max_rounds,
+            start_step=start_step,
+        )
         return
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -542,10 +587,14 @@ async def run_pipeline(
                 "결과보고서가 없습니다. 먼저 result-generator를 실행하여 결과보고서를 생성하세요."
             )
 
-    # Codex 환경 preflight (provider=codex 일 때만)
-    if active_preset.provider == "codex":
-        _log(f"Codex preflight 실행 중 (model={active_preset.role_models[ROLE_ORDER[0]]})...")
-        await _codex_healthcheck(active_preset)
+    # Codex 환경 preflight — 활성 roles 중 codex provider가 하나라도 있을 때만
+    codex_aliases = [
+        alias_for_role(active_preset, r) for r in roles
+        if alias_for_role(active_preset, r).provider == "codex"
+    ]
+    if codex_aliases:
+        _log(f"Codex preflight 실행 중 (model={codex_aliases[0].model_id})...")
+        await _codex_healthcheck(active_preset, roles)
 
     _log(f"파이프라인 시작: {' → '.join(roles)}")
     pipeline_start = time.monotonic()

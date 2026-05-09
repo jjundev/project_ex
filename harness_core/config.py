@@ -31,13 +31,9 @@ ROLE_ORDER = [
     "result-reviewer",
 ]
 
-MODEL_OPUS = "claude-opus-4-6"
+MODEL_OPUS = "claude-opus-4-7"
 MODEL_SONNET = "claude-sonnet-4-6"
-
-ROLE_MODELS: dict[str, str] = {
-    "pre-generator": MODEL_OPUS,
-    "result-generator": MODEL_OPUS,
-}
+MODEL_GPT_DEFAULT = "gpt-5.5"
 
 SKILL_PATHS: dict[str, Path] = {
     "pre-generator": SKILLS_DIR / "pre-report" / "SKILL.md",
@@ -47,37 +43,61 @@ SKILL_PATHS: dict[str, Path] = {
 }
 
 # ---------------------------------------------------------------------------
-# 모델 프리셋
+# 모델 alias 레지스트리 — provider별 모델 구성을 짧은 이름으로 묶는다.
 # ---------------------------------------------------------------------------
 
-MODEL_GPT_DEFAULT = "gpt-5.5"
+
+@dataclass(frozen=True)
+class ModelAlias:
+    """provider, model_id, codex 전용 reasoning effort를 묶은 모델 구성."""
+
+    provider: Literal["claude", "codex"]
+    model_id: str
+    reasoning: str | None = None  # codex 전용
+
+
+MODEL_ALIASES: dict[str, ModelAlias] = {
+    "opus": ModelAlias("claude", MODEL_OPUS),
+    "sonnet": ModelAlias("claude", MODEL_SONNET),
+    "gpt-5.5": ModelAlias("codex", MODEL_GPT_DEFAULT, reasoning="high"),
+}
+
+# ---------------------------------------------------------------------------
+# 모델 프리셋 — generator/reviewer 2-카테고리로 alias 묶음.
+# ---------------------------------------------------------------------------
+
+Category = Literal["generator", "reviewer"]
 
 
 @dataclass(frozen=True)
 class ModelPreset:
-    """provider별 역할-모델 매핑 묶음."""
+    """generator/reviewer 카테고리별 alias 묶음."""
 
-    provider: Literal["claude", "codex"]
-    role_models: dict[str, str]
-    role_reasoning: dict[str, str] | None = None  # codex 전용
+    generator: str  # alias name
+    reviewer: str   # alias name
 
 
 MODEL_PRESETS: dict[str, ModelPreset] = {
-    "claude-default": ModelPreset(
-        provider="claude",
-        role_models={
-            "pre-generator": MODEL_OPUS,
-            "pre-reviewer": MODEL_SONNET,
-            "result-generator": MODEL_OPUS,
-            "result-reviewer": MODEL_SONNET,
-        },
-    ),
-    "gpt-quality": ModelPreset(
-        provider="codex",
-        role_models={r: MODEL_GPT_DEFAULT for r in ROLE_ORDER},
-        role_reasoning={r: "high" for r in ROLE_ORDER},
-    ),
+    "claude-default": ModelPreset(generator="opus", reviewer="sonnet"),
+    "gpt-quality": ModelPreset(generator="gpt-5.5", reviewer="gpt-5.5"),
 }
 
 DEFAULT_MODEL_PRESET = "gpt-quality"
 
+
+def role_to_category(role: str) -> Category:
+    """role 이름에서 카테고리(generator/reviewer)를 도출한다."""
+    if role.endswith("-generator"):
+        return "generator"
+    if role.endswith("-reviewer"):
+        return "reviewer"
+    raise ValueError(f"카테고리를 알 수 없는 role: {role}")
+
+
+def alias_for_role(preset: ModelPreset, role: str) -> ModelAlias:
+    """preset과 role에서 최종 ModelAlias를 해석한다."""
+    category = role_to_category(role)
+    alias_name = preset.generator if category == "generator" else preset.reviewer
+    if alias_name not in MODEL_ALIASES:
+        raise ValueError(f"알 수 없는 alias: {alias_name}")
+    return MODEL_ALIASES[alias_name]

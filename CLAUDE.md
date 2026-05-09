@@ -15,6 +15,26 @@ codex login
 
 기본 preset은 `gpt-quality` (Codex Python SDK + gpt-5.5)다. Claude Opus/Sonnet으로 강제하려면 매 실행에 `--model-preset claude-default` 를 붙인다.
 
+### 모델 alias / 카테고리 override
+
+모든 모델은 alias로 지정한다 (`opus`, `sonnet`, `gpt-5.5`). preset은 `generator` / `reviewer` 두 카테고리로 alias를 묶고, CLI에서 카테고리별로 덮어쓸 수 있다.
+
+```bash
+# generator는 Opus, reviewer는 GPT-5.5 (mixed provider)
+python harness.py --generator-model opus --reviewer-model gpt-5.5
+
+# claude-default base에 reviewer만 GPT로 교체
+python harness.py --model-preset claude-default --reviewer-model gpt-5.5
+```
+
+| alias | provider | model_id | reasoning |
+|---|---|---|---|
+| `opus` | claude | claude-opus-4-7 | — |
+| `sonnet` | claude | claude-sonnet-4-6 | — |
+| `gpt-5.5` | codex | gpt-5.5 | high |
+
+Codex preflight는 활성 roles(`--from`/`--to` 범위) 안에 codex provider가 하나라도 있을 때만 실행한다.
+
 ## 사용 가능 커맨드
 
 ```bash
@@ -35,23 +55,26 @@ python harness.py --dry-run
 
 # Claude (Opus/Sonnet) 강제 사용
 python harness.py --model-preset claude-default
+
+# generator/reviewer를 카테고리별로 따로 지정 (mixed provider 가능)
+python harness.py --generator-model opus --reviewer-model gpt-5.5
 ```
 
 ### 파이프라인 역할 순서
 `pre-generator` → `pre-reviewer` → `result-generator` → `result-reviewer`
 
-예비보고서는 **2단계 GAN 루프**로 작성된다:
+예비보고서는 **2단계 GAN 루프**로 작성된다 (모델 컬럼은 카테고리 — 실제 alias는 `--model-preset` / `--generator-model` / `--reviewer-model`로 결정):
 
-| 단계 | 역할 | 내용 | 모델 |
+| 단계 | 역할 | 내용 | 카테고리 |
 |---|---|---|---|
-| Phase 1 생성 | `pre-generator` | 실험 목적·준비물·이론 작성 | Opus |
-| Phase 1 검토 | `pre-reviewer` | 이론 섹션 완성도 검증 → `pre_review_theory.md` | Sonnet |
-| Phase 2 생성 | `pre-generator` | 예상 결과 값 추가 | Opus |
-| Phase 2 검토 | `pre-reviewer` | KVL/KCL 계산 검증 → `pre_review.md` | Sonnet |
-| Phase 1 생성 | `result-generator` | 실험 결과 섹션 + 연습 문제 섹션 작성 (`input/exercise/` 있을 때) | Opus |
-| Phase 1 검토 | `result-reviewer` | %(Difference) 수치 검증 + 연습 문제 9개 항목 검증 → `result_review_data.md` | Sonnet |
-| Phase 2 생성 | `result-generator` | 고찰 섹션 추가 | Opus |
-| Phase 2 검토 | `result-reviewer` | 고찰 품질 검토 → `result_review.md` | Sonnet |
+| Phase 1 생성 | `pre-generator` | 실험 목적·준비물·이론 작성 | generator |
+| Phase 1 검토 | `pre-reviewer` | 이론 섹션 완성도 검증 → `pre_review_theory.md` | reviewer |
+| Phase 2 생성 | `pre-generator` | 예상 결과 값 추가 | generator |
+| Phase 2 검토 | `pre-reviewer` | KVL/KCL 계산 검증 → `pre_review.md` | reviewer |
+| Phase 1 생성 | `result-generator` | 실험 결과 섹션 + 연습 문제 섹션 작성 (`input/exercise/` 있을 때) | generator |
+| Phase 1 검토 | `result-reviewer` | %(Difference) 수치 검증 + 연습 문제 9개 항목 검증 → `result_review_data.md` | reviewer |
+| Phase 2 생성 | `result-generator` | 고찰 섹션 추가 | generator |
+| Phase 2 검토 | `result-reviewer` | 고찰 품질 검토 → `result_review.md` | reviewer |
 
 ## 디렉토리 구조
 - `docx/` : 보고서 템플릿
