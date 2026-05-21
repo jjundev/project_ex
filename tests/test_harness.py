@@ -4,6 +4,9 @@ from pathlib import Path
 
 import harness
 from harness_core import prompts
+from harness_core.io_state import extract_pass_sections
+
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 
 
 def test_parse_review_verdict_pass_fail_unknown(tmp_path: Path) -> None:
@@ -23,26 +26,96 @@ def test_parse_review_verdict_pass_fail_unknown(tmp_path: Path) -> None:
     assert harness.parse_review_verdict(missing_path) == "UNKNOWN"
 
 
-def test_extract_fail_items_only_fail_lines(tmp_path: Path) -> None:
+def test_extract_fail_items_returns_full_review_body(tmp_path: Path) -> None:
+    """extract_fail_items는 review 본문 전체를 그대로 generator에게 전달한다.
+
+    이전 정규식 기반 추출은 `### 발견된 문제점` 섹션의 구체 fix 지시를
+    누락시켜 generator의 부분 수정이 라운드마다 같은 항목을 못 고치는
+    근본 원인이었다 (12주차 line 97 사례). 이제 정보 손실 없이 통째로 전달.
+    """
+    review_body = "\n".join(
+        [
+            "### 실험 목적",
+            "- 판정: PASS (설명에서 FAIL 단어가 언급될 수 있음)",
+            "- 계산: FAIL (수치 불일치)",
+            "### 발견된 문제점",
+            "- [실험 이론] 정현파 R/L/C: Ch 10 Part 1을 제거해야 함.",
+            "최종 판정: FAIL",
+        ]
+    )
+    review_path = tmp_path / "review.md"
+    review_path.write_text(review_body, encoding="utf-8")
+
+    result = harness.extract_fail_items(review_path)
+
+    assert result == review_body
+    assert "Ch 10 Part 1을 제거해야 함" in result
+
+
+def test_extract_fail_items_returns_empty_for_missing_file(tmp_path: Path) -> None:
+    assert harness.extract_fail_items(tmp_path / "nope.md") == ""
+
+
+def test_extract_pass_sections_filters_review_categories(tmp_path: Path) -> None:
+    """review 카테고리 H3는 보고서 섹션이 아니므로 PASS list에서 자동 제외."""
     review_path = tmp_path / "review.md"
     review_path.write_text(
         "\n".join(
             [
+                "## 이론 섹션 검토 결과",
                 "### 실험 목적",
-                "- 판정: PASS (설명에서 FAIL 단어가 언급될 수 있음)",
-                "- 계산: FAIL (수치 불일치)",
+                "- 판정: PASS",
+                "### 실험 준비물",
+                "- 판정: PASS",
+                "### 실험 이론",
+                "- 판정: FAIL (위상 부호 오류)",
+                "### 경계 침범 체크",
+                "- 판정: PASS",
+                "### STT 충돌 처리 체크",
+                "- 유형 A (수치 파라미터): PASS",
+                "- 유형 B (절차/회로 변형): PASS",
                 "최종 판정: FAIL",
             ]
         ),
         encoding="utf-8",
     )
 
-    fail_lines = harness.extract_fail_items(review_path).splitlines()
+    result = extract_pass_sections(review_path)
 
-    assert fail_lines == [
-        "- 계산: FAIL (수치 불일치)",
-        "최종 판정: FAIL",
-    ]
+    assert result == ["실험 목적", "실험 준비물"]
+    assert "경계 침범 체크" not in result
+    assert "STT 충돌 처리 체크" not in result
+
+
+def test_extract_fail_items_preserves_round2_fix_directive() -> None:
+    """12주차 round 2 review 회귀 테스트.
+
+    Round 3에 잔존한 "Ch 10 Part 1, C = 0.01 μF" 오기재는 round 2 review의
+    `### 발견된 문제점` bullet에 명시적으로 적혀 있었지만, 이전 정규식이
+    그 bullet을 generator에게 전달하지 않아 fix 실패 → max_rounds 초과로 이어졌다.
+    이 테스트는 실제 round 2 review 파일을 fixture로 사용해 fix 지시가
+    fail_summary에 보존되는지 영구 검증한다.
+    """
+    fixture = FIXTURES_DIR / "pre_review_theory_round2_12week.md"
+    summary = harness.extract_fail_items(fixture)
+
+    assert "Ch 10 Part 1" in summary
+    assert "C = 0.01 μF" in summary
+    assert "잘못된 사용처 표기임" in summary
+    assert "최종 판정: FAIL" in summary
+
+
+def test_extract_pass_sections_round2_filters_review_categories() -> None:
+    """12주차 round 2 review의 PASS 섹션 추출이 보고서 섹션만 반환하는지 검증."""
+    fixture = FIXTURES_DIR / "pre_review_theory_round2_12week.md"
+    pass_sections = extract_pass_sections(fixture)
+
+    assert "실험 목적" in pass_sections
+    assert "실험 준비물" in pass_sections
+    assert "실험 이론" not in pass_sections
+    assert "경계 침범 체크" not in pass_sections
+    assert "STT 충돌 처리 체크" not in pass_sections
+    assert "발견된 문제점" not in pass_sections
 
 
 class _FixedNow:

@@ -5,7 +5,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from .config import BOOK_DIR, EXERCISE_DIR, MEASURED_DIR, NOTE_DIR, OUTPUT_DIR, STT_DIR
+from .config import (
+    BOOK_DIR,
+    EXERCISE_DIR,
+    MEASURED_DIR,
+    NOTE_DIR,
+    OUTPUT_DIR,
+    REPORT_SECTIONS,
+    STT_DIR,
+)
 
 
 def _has_expected_values_section(report_path: Path) -> bool:
@@ -206,23 +214,28 @@ def parse_review_verdict(review_path: Path) -> str:
 
 
 def extract_fail_items(review_path: Path) -> str:
-    """검토 파일에서 판정 FAIL 줄만 추출하여 반환한다.
+    """검토 파일 본문 전체를 그대로 반환한다.
 
-    '판정: FAIL' 또는 '최종 판정: FAIL' 형태의 줄만 추출한다.
-    PASS 줄 주석에 'FAIL'이 언급된 위양성을 방지하기 위해 정규식을 사용한다.
+    이전에는 ":\\s*FAIL" 매칭 줄만 추출했지만, 그 정규식은 reviewer가
+    `### 발견된 문제점` 섹션에 적은 구체적 fix 지시(어디서/무엇을/어떻게 고칠지)를
+    누락시켰다. generator가 라운드마다 같은 항목을 못 고치고 max_rounds를 초과하는
+    실패의 직접 원인이었다. 이제 review 본문을 통째로 fail_summary로 전달해
+    정보 손실을 0으로 만든다.
     """
     if not review_path.exists():
         return ""
-    lines = review_path.read_text(encoding="utf-8").splitlines()
-    return "\n".join(l for l in lines if re.search(r":\s*FAIL", l))
+    return review_path.read_text(encoding="utf-8")
 
 
 def extract_pass_sections(review_path: Path) -> list[str]:
-    """검토 파일에서 판정 PASS인 섹션의 헤더 이름만 추출한다.
+    """검토 파일에서 판정 PASS인 보고서 섹션 헤더 이름을 추출한다.
 
     `### {섹션명}` 다음에 같은 섹션 블록 안에서 `판정: PASS`가 나오고
     `판정: FAIL`이 나오지 않는 경우의 섹션명을 반환한다.
-    pre_review_theory.md 형식 (실험 목적 / 실험 준비물 / 실험 이론) 전용.
+
+    review 파일에는 `### 경계 침범 체크`, `### STT 충돌 처리 체크`,
+    `### 발견된 문제점` 같은 검토 카테고리 H3도 함께 있으므로,
+    REPORT_SECTIONS 화이트리스트와 교집합하여 보고서 섹션 이름만 반환한다.
     """
     if not review_path.exists():
         return []
@@ -235,7 +248,12 @@ def extract_pass_sections(review_path: Path) -> list[str]:
 
     def flush() -> None:
         nonlocal current, has_pass, has_fail
-        if current is not None and has_pass and not has_fail:
+        if (
+            current is not None
+            and has_pass
+            and not has_fail
+            and current in REPORT_SECTIONS
+        ):
             pass_sections.append(current)
         current = None
         has_pass = False
