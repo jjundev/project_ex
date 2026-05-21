@@ -2,15 +2,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .config import OUTPUT_DIR, STT_DIR, TEMPLATE_PATH
+from .config import EXERCISE_DIR, OUTPUT_DIR, STT_DIR, TEMPLATE_PATH
 from .io_state import (
+    _exercise_files_present,
     _find_measurements,
     _find_pre_reports,
     _find_result_reports,
     _has_discussion_section,
+    _has_exercise_section,
     _latest_result_report,
     collect_docx_files,
     extract_pass_sections,
+    parse_review_verdict,
 )
 
 
@@ -223,7 +226,8 @@ def _build_pre_reviewer_phase1_prompt(extra: str = "") -> str:
 """
 
 
-def _build_result_generator_prompt(extra: str = "") -> str:
+def _build_result_generator_phase1_prompt(extra: str = "") -> str:
+    """Phase 1: # 실험 결과 섹션만 작성. 연습 문제·고찰은 후속 phase에서 처리."""
     pre_reports = _find_pre_reports()
     measurements = _find_measurements()
     docx_files = collect_docx_files()
@@ -239,11 +243,6 @@ def _build_result_generator_prompt(extra: str = "") -> str:
         "\n".join(f"  - {f}" for f in docx_files["stt"])
         if docx_files["stt"]
         else "  (없음)"
-    )
-    exercise_list = (
-        "\n".join(f"  - {f}" for f in docx_files["exercise"])
-        if docx_files["exercise"]
-        else "  (없음 — `# 연습 문제` 섹션 생략)"
     )
 
     rework_section = ""
@@ -265,16 +264,17 @@ def _build_result_generator_prompt(extra: str = "") -> str:
 ### 작업 방식
 1. 위 기존 결과보고서를 Read로 먼저 읽으세요.
 2. `재작업 지시사항`에 명시된 FAIL 항목만 Edit으로 수정하세요. FAIL 목록에 없는 Table/항목은 변경하지 마세요.
-3. 수정에 필요한 경우에만 아래 입력 자료(교재 Table 원형, 측정값, 연습 문제)를 선택적으로 다시 읽으세요.
+3. 수정에 필요한 경우에만 아래 입력 자료(교재 Table 원형, 측정값)를 선택적으로 다시 읽으세요.
 4. 같은 파일에 덮어쓰기로 저장하세요.
+5. **`# 연습 문제` 섹션이 보고서에 이미 존재하면 절대 수정하지 마세요.** Phase 2에서 작성된 영역이며 Phase 1 재생성 시 보존 대상입니다.
+6. **`# 고찰` 섹션이 보고서에 이미 존재하면 절대 수정하지 마세요.** Phase 3에서 작성된 영역이며 Phase 1 재생성 시 보존 대상입니다.
 """
 
-    return f"""아래 자료를 사용하여 결과보고서 **Phase 1** (실험 결과 + 연습 문제)을 생성하세요.
+    return f"""아래 자료를 사용하여 결과보고서 **Phase 1** (실험 결과)을 생성하세요.
 
-> **주의**: 이번 단계에서는 `# 고찰` 섹션을 작성하지 마세요.
-> 고찰은 실험 결과 검토 통과 후 Phase 2에서 별도로 작성합니다.
-> `# 연습 문제` 섹션은 `input/exercise/` 폴더에 자료가 있을 때만 작성합니다.
-> 자료가 없으면 `# 연습 문제` 섹션 자체를 생략하세요 (빈 헤더만 남기지 마세요).
+> **주의**: 이번 단계에서는 `# 실험 결과` 섹션만 작성합니다.
+> `# 연습 문제` 섹션은 Phase 2에서, `# 고찰` 섹션은 Phase 3에서 별도로 작성합니다.
+> 이번 단계에 `# 연습 문제`나 `# 고찰` 섹션을 작성하지 마세요.
 {rework_section}{retry_section}
 ## 입력 자료
 
@@ -286,9 +286,6 @@ def _build_result_generator_prompt(extra: str = "") -> str:
 
 ### 측정값 파일 (input/measured/)
 {meas_list}
-
-### 연습 문제 자료 (input/exercise/) — 이미지/PDF/MD/텍스트
-{exercise_list}
 
 ### 실험 영상 STT (참고용)
 {exp_list}
@@ -305,13 +302,69 @@ def _build_result_generator_prompt(extra: str = "") -> str:
 6. 교재가 그래프 판독값, 측정 교차점, 특정 임계점, 특정 주파수/시간의 실측 데이터 기반 값을 요구하면 먼저 측정값에서 좌표나 파생값을 산출하세요. `X = R`, `V = E/√2`, `τ = RC` 같은 이론식은 이론 기준값 또는 비교·해석용 값으로 분리하고, 측정 기반 산출값을 덮어쓰지 마세요.
 7. 표의 값이 측정 기반 산출값인지, 명판값 기반 이론 계산인지, 실측 소자값 기반 재계산인지 Table 앞 설명에 구분해 명시하세요.
 8. system prompt의 **Step 1~3** (예비보고서 로드, 실측값 입력, 실험 결과 작성)을 수행하세요.
-9. `# 실험 결과` 섹션을 작성하세요. `input/exercise/`에 자료가 있으면 그 *직후*(즉 `# 실험 결과` 다음, 향후 추가될 `# 고찰` *앞*)에 `# 연습 문제` 섹션을 system prompt **Step 3-11** 규칙(Ch 그룹화 자동 추론, `### Exercise N — 제목` 형식, ① ② ③ 단계 번호, 단위 변환 명시, Type 3 Calculated/Experimental Table의 Experimental 칸은 *항상* "실험 측정값" placeholder 유지)에 따라 작성하세요. 자료가 없으면 `# 연습 문제` 섹션 자체를 만들지 마세요. `# 고찰` 은 작성하지 마세요 (Phase 2).
+9. `# 실험 결과` 섹션만 작성하세요. `# 연습 문제` (Phase 2 영역) 와 `# 고찰` (Phase 3 영역) 은 작성하지 마세요.
 10. 최종 보고서는 `{OUTPUT_DIR}` 경로에 Markdown 파일로 저장하세요.
 11. 파일명 형식: `{{N}}주차_결과보고서.md`
 """
 
 
 def _build_result_generator_phase2_prompt(extra: str = "") -> str:
+    """Phase 2: # 연습 문제 섹션만 추가. Phase 1 섹션은 read-only."""
+    result_reports = _find_result_reports()
+    docx_files = collect_docx_files()
+
+    report_list = "\n".join(f"  - {f}" for f in result_reports) or "  (없음)"
+    exercise_list = (
+        "\n".join(f"  - {f}" for f in docx_files["exercise"])
+        if docx_files["exercise"]
+        else "  (없음 — Phase 2를 호출해서는 안 됩니다)"
+    )
+
+    rework_section = ""
+    if extra:
+        rework_section = f"\n## 재작업 지시사항\n{extra}\n"
+
+    return f"""결과보고서에 **`# 연습 문제` 섹션만** 추가하세요 (Phase 2).
+
+> **Phase 1에서 작성된 `# 실험 결과` 섹션은 절대 수정하지 마세요** (헤더·표·계산·수치·sub-bullet 모두 읽기 전용).
+> Phase 1 검증이 이미 PASS된 상태이며, Phase 2에서 손대면 Phase 1 reviewer가 잡지 못해 라운드 무한 반복 위험이 있습니다.
+{rework_section}
+## 현재 결과보고서 (Phase 1에서 작성된 파일)
+
+{report_list}
+
+## 연습 문제 자료 (input/exercise/) — 이미지/PDF/MD/텍스트
+
+{exercise_list}
+
+## 삽입 위치 규칙 (필수)
+
+1. 보고서를 Read한다.
+2. 보고서에 `# 고찰` 헤더가 있으면 그 줄 *앞*에 `# 연습 문제` 섹션을 Edit으로 insert한다.
+3. `# 고찰` 헤더가 없으면 파일 *맨 끝*에 `# 연습 문제` 섹션을 append한다.
+4. 절대 `# 실험 결과` 내부의 `## Ch X` 섹션 사이나 그 위쪽에 끼우지 마라.
+
+## 지시사항
+
+1. 위 결과보고서를 Read하세요.
+2. `input/exercise/` 자료를 모두 읽으세요. 이미지는 vision으로 직접 파싱하여 *문제 본문·조건·그림(Fig X.Y)* 을 추출하세요.
+3. system prompt의 **Step 4 (연습 문제 작성, Phase 2)** 지침을 따르세요.
+   - Ch 그룹화 자동 추론 (파일명 무시, 문제 *내용*에서 추론)
+   - 헤더 구조: `# 연습 문제` → `## AC Ch X` (또는 `DC Ch X`) → `### Exercise N — 제목`
+   - 풀이 단계는 ① ② ③ 원숫자 번호 사용
+   - 단위 변환 (p-p ↔ rms 등) 명시
+   - **Type 3 Calculated/Experimental Table의 Experimental 칸은 *항상* "실험 측정값" placeholder 유지** (측정값 파일에서 자동 매핑 금지)
+4. 위 "삽입 위치 규칙"대로 Edit insert / append 하세요.
+5. 저장 후 작업 완료를 보고하세요.
+
+## 재작업 모드 (Phase 2 FAIL 후 재시도)
+
+`재작업 지시사항`이 위에 있으면 해당 FAIL 항목만 `# 연습 문제` 섹션 안에서 Edit으로 수정하세요. Phase 1 영역(`# 실험 결과`)은 절대 손대지 마세요.
+"""
+
+
+def _build_result_generator_phase3_prompt(extra: str = "") -> str:
+    """Phase 3: # 고찰 섹션만 추가. Phase 1 (실험 결과)·Phase 2 (연습 문제) 모두 read-only."""
     result_reports = _find_result_reports()
     report_list = "\n".join(f"  - {f}" for f in result_reports) or "  (없음)"
 
@@ -319,19 +372,19 @@ def _build_result_generator_phase2_prompt(extra: str = "") -> str:
     if extra:
         rework_section = f"\n## 재작업 지시사항\n{extra}\n"
 
-    return f"""결과보고서에 **고찰 섹션만** 추가하세요 (Phase 2).
+    return f"""결과보고서에 **`# 고찰` 섹션만** 추가하세요 (Phase 3).
 
-> **Phase 1에서 작성된 `# 실험 결과`와 `# 연습 문제` 섹션은 절대 수정하지 마세요** (헤더·표·계산·수치·sub-bullet 모두 읽기 전용).
-> Phase 1 검증이 이미 PASS된 상태이며, Phase 2에서 손대면 Phase 2 리뷰가 Phase 1 오류를 잡지 못해 라운드 무한 반복 위험이 있습니다.
+> **Phase 1에서 작성된 `# 실험 결과` 섹션과 Phase 2에서 작성된 `# 연습 문제` 섹션은 절대 수정하지 마세요** (헤더·표·계산·수치·sub-bullet 모두 읽기 전용).
+> Phase 1·2 검증이 이미 PASS된 상태이며, Phase 3에서 손대면 Phase 1·2 reviewer가 잡지 못해 라운드 무한 반복 위험이 있습니다.
 {rework_section}
-## 현재 결과보고서 (Phase 1에서 작성된 파일)
+## 현재 결과보고서 (Phase 1·2에서 작성된 파일)
 
 {report_list}
 
 ## 지시사항
 
 1. 현재 결과보고서를 읽어 `# 실험 결과` 섹션의 모든 Table 데이터와 %(Difference) 수치를 파악하세요. `# 연습 문제` 섹션이 있으면 그 내용도 파악(인용은 가능, 수정은 금지)하세요.
-2. system prompt의 **Step 4 (고찰 작성)** 지침에 따라 고찰을 작성하세요.
+2. system prompt의 **Step 5 (고찰 작성, Phase 3)** 지침에 따라 고찰을 작성하세요.
    - 결과 분석, 오차 원인, 개선 방안, 결론 소섹션 포함
    - 구체적인 %(Difference) 수치 인용 필수
    - 정량적 오차 원인 분석 필수
@@ -348,6 +401,7 @@ def _build_result_reviewer_phase1_prompt(
     extra: str = "",
     output_dir: Path = OUTPUT_DIR,
 ) -> str:
+    """Phase 1 검토: # 실험 결과 섹션의 데이터/수치 검증만. 연습 문제는 Phase 2 reviewer에서 별도 검증."""
     rework_section = ""
     if extra:
         rework_section = f"\n## 이전 검토 FAIL 항목 (재작업 반영 확인)\n{extra}\n"
@@ -358,11 +412,6 @@ def _build_result_reviewer_phase1_prompt(
     pre_list = "\n".join(f"  - {f}" for f in pre_reports) or "  (없음)"
     docx_files = collect_docx_files()
     book_list = "\n".join(f"  - {f}" for f in docx_files["book"]) or "  (없음)"
-    exercise_list = (
-        "\n".join(f"  - {f}" for f in docx_files["exercise"])
-        if docx_files["exercise"]
-        else "  (없음 — `# 연습 문제` 섹션 검증 생략)"
-    )
     measurements = _find_measurements()
     meas_list = (
         "\n".join(f"  - {f}" for f in measurements)
@@ -370,7 +419,7 @@ def _build_result_reviewer_phase1_prompt(
         else "  (없음 - Measured 열 원본 대조 생략)"
     )
 
-    return f"""생성된 결과보고서의 **실험 결과 + 연습 문제 섹션**을 검증하세요 (Phase 1 검토).
+    return f"""생성된 결과보고서의 **`# 실험 결과` 섹션**을 검증하세요 (Phase 1 검토).
 {rework_section}
 ## 검토 대상
 
@@ -386,12 +435,9 @@ def _build_result_reviewer_phase1_prompt(
 측정값 파일 (input/measured/) — Measured 열 원본 대조용:
 {meas_list}
 
-연습 문제 자료 (input/exercise/) — `# 연습 문제` 섹션 검증용:
-{exercise_list}
-
 ## 검증 항목
 
-`# 실험 결과` 섹션 및 `# 연습 문제` 섹션(있는 경우)만 검토하세요 (고찰 섹션은 아직 없습니다):
+`# 실험 결과` 섹션만 검토하세요. `# 연습 문제` 섹션과 `# 고찰` 섹션이 이미 보고서에 있더라도 이 단계에서는 *검증 대상이 아닙니다* (Phase 2·3 reviewer가 별도로 검증).
 
 1. **교재 Table 구조 대조**: `input/book/` 원본의 Table 번호, 행/열 라벨, 작성 요구사항과 결과보고서 Table 구조가 일치하는지 확인
 2. **임의 열 추가/누락 검증**: 교재에 없는 `Calculated`, `Measured`, `%(Difference)` 열이 추가되었거나, 교재에 있는 행/열이 빠졌으면 FAIL
@@ -401,20 +447,6 @@ def _build_result_reviewer_phase1_prompt(
 6. **측정 기반 산출값 검증**: 교재가 그래프 판독값, 측정 교차점, 특정 임계점, 특정 주파수/시간의 실측 데이터 기반 값을 요구하면 인접 측정점 보간 또는 명시된 판독 기준으로 산출했는지 확인. 측정 기반 표를 `X = R`, `V = E/√2`, `τ = RC` 같은 이론 기준값으로 단정하거나 관계식만으로 채웠으면 FAIL
 7. **%(Difference) 검증**: 교재 Table이 계산값 비교 구조를 요구하는 경우에만 `|Calculated - Measured| / Calculated × 100` 공식으로 재계산
 8. **단위 일관성**: mA, V, kΩ, Ω, μF, s 등 단위 표기 여부
-9. **연습 문제 검증** (`input/exercise/` 폴더에 자료가 있을 때만 적용):
-   - **자료가 있는데 보고서에 `# 연습 문제` 섹션이 없으면 FAIL** (Exercise 누락). 자료가 없는데 섹션이 있으면 FAIL (환각 섹션).
-   - 섹션이 있으면 다음 10개 항목을 모두 검증한다 (system prompt `result-review` SKILL.md Step 6 + 섹션 위치):
-     - **(a) 섹션 위치**: `# 연습 문제`가 `# 실험 결과` *뒤*, (있다면) `# 고찰` *앞*에 위치하는가. 아니면 FAIL.
-     - **(b) Exercise 누락**: 입력 폴더의 모든 Exercise(이미지/PDF/MD)가 보고서에 작성되었는가.
-     - **(c) 입력 파싱**: 입력 자료의 *조건*(주어진 R, V, f 등)이 보고서 풀이에 정확히 반영되었는가 (단위 혼동 포함).
-     - **(d) 단위 변환**: p-p ↔ rms 변환에서 ×2√2, ÷2√2가 정확히 적용되었는가.
-     - **(e) 단계별 계산 흐름**: ① 결과가 ② 입력으로 정확히 사용되었는가.
-     - **(f) 공식 정확성**: X_L = 2πfL, |Z| = √(R²+X²), θ = arctan(X/R) 등 공식이 회로 이론과 일치하는가 (부호·인자 포함).
-     - **(g) 재계산 일치**: 모든 수치를 직접 재계산하여 보고서 값과 일치하는가.
-     - **(h) 단위 표기**: 모든 수치에 단위(V/mA/Ω/μF/Hz/° 등)가 표기되었는가.
-     - **(i) 정답-본문 일관성**: "정답" 섹션의 값이 본문 마지막 단계 결과와 일치하는가.
-     - **(j) Calculated/Experimental Table 형식** (Type 3 Exercise 한정): 헤더가 `구분 | Calculated | Experimental` 형식인가. Calculated 열만 풀이값으로 채워졌고, **Experimental 칸은 *모두* "실험 측정값" placeholder를 유지하는가** (자동 채움 흔적이 있으면 FAIL).
-   - Q5 중간 산술 오류 정책 (system prompt 참조): 중간 표기와 정확값이 *최종 정답에서 동일 자리수*에서 같으면 PASS + "미세 표기 불일치" 메모. 최종 정답이 다르면 FAIL.
 
 ## 출력 형식
 
@@ -430,19 +462,6 @@ def _build_result_reviewer_phase1_prompt(
 - Calculated 재계산: PASS 또는 FAIL (오류 내용)
 - %(Difference) 계산: PASS 또는 FAIL (오류 내용 및 올바른 값)
 
-### 연습 문제 검증
-(`input/exercise/` 자료가 없으면 이 블록 자체를 생략. 자료가 있으면 아래 10개 항목을 모두 표기.)
-- 섹션 위치: PASS 또는 FAIL (# 실험 결과 뒤 / # 고찰 앞 위치 여부)
-- Exercise 누락: PASS 또는 FAIL (누락 Exercise 식별자)
-- 입력 파싱: PASS 또는 FAIL (조건 불일치 항목)
-- 단위 변환: PASS 또는 FAIL (p-p ↔ rms 오류 위치)
-- 단계별 계산 흐름: PASS 또는 FAIL (앞→뒤 단계 불일치 위치)
-- 공식 정확성: PASS 또는 FAIL (잘못된 공식 위치)
-- 재계산 일치: PASS 또는 FAIL (보고서 값 vs 정확값)
-- 단위 표기: PASS 또는 FAIL (단위 누락 항목)
-- 정답-본문 일관성: PASS 또는 FAIL (불일치 Exercise)
-- Calculated/Experimental Table 형식 (해당 시): PASS 또는 FAIL (Experimental 자동 채움 흔적 시 FAIL)
-
 ### 발견된 오류 목록
 - [구체적 오류 항목, 없으면 "없음"]
 
@@ -452,7 +471,6 @@ def _build_result_reviewer_phase1_prompt(
 마지막 줄은 반드시 `최종 판정: PASS` 또는 `최종 판정: FAIL` 형식으로 끝내세요.
 오류가 하나라도 있으면 FAIL, %(Difference) > 20%인 항목은 별도 표시하여 측정값 재확인을 권고하세요.
 측정값 파일이 존재하지 않는 것은 FAIL 사유가 아닙니다. 단, 파일이 있는데 보고서 Measured 값과 다르면 FAIL입니다.
-`input/exercise/` 폴더가 비어있는데 `# 연습 문제` 섹션이 보고서에 *없는* 것은 정상(생략)이며 FAIL 사유가 아닙니다.
 """
 
 
@@ -460,6 +478,88 @@ def _build_result_reviewer_phase2_prompt(
     extra: str = "",
     output_dir: Path = OUTPUT_DIR,
 ) -> str:
+    """Phase 2 검토: # 연습 문제 섹션 전용 (10-항목 검증 + 섹션 위치)."""
+    rework_section = ""
+    if extra:
+        rework_section = f"\n## 이전 검토 FAIL 항목 (재작업 반영 확인)\n{extra}\n"
+
+    result_reports = _find_result_reports(output_dir=output_dir)
+    report_list = "\n".join(f"  - {f}" for f in result_reports) or "  (없음)"
+    docx_files = collect_docx_files()
+    exercise_list = (
+        "\n".join(f"  - {f}" for f in docx_files["exercise"])
+        if docx_files["exercise"]
+        else "  (없음 — Phase 2 검토를 호출해서는 안 됩니다)"
+    )
+
+    return f"""생성된 결과보고서의 **`# 연습 문제` 섹션**을 검증하세요 (Phase 2 검토).
+{rework_section}
+## 검토 대상
+
+결과보고서:
+{report_list}
+
+연습 문제 자료 (input/exercise/):
+{exercise_list}
+
+## 검증 항목
+
+`# 연습 문제` 섹션만 검토하세요. `# 실험 결과` 섹션은 Phase 1 reviewer가 이미 검증했으므로 이 단계에서는 검증하지 마세요.
+
+### 섹션 존재 확인
+- `input/exercise/` 자료가 있는데 보고서에 `# 연습 문제` 섹션이 *없으면* FAIL (Exercise 누락).
+- `input/exercise/` 자료가 *없는데* 보고서에 `# 연습 문제` 섹션이 있으면 FAIL (환각 섹션).
+
+### 섹션이 있을 때 10개 항목 (system prompt `result-review` SKILL.md Step 6 참조)
+
+- **(a) 섹션 위치**: `# 연습 문제`가 `# 실험 결과` *뒤*, (있다면) `# 고찰` *앞*에 위치하는가. 아니면 FAIL.
+- **(b) Exercise 누락**: 입력 폴더의 모든 Exercise(이미지/PDF/MD)가 보고서에 작성되었는가.
+- **(c) 입력 파싱**: 입력 자료의 *조건*(주어진 R, V, f 등)이 보고서 풀이에 정확히 반영되었는가 (단위 혼동 포함).
+- **(d) 단위 변환**: p-p ↔ rms 변환에서 ×2√2, ÷2√2가 정확히 적용되었는가.
+- **(e) 단계별 계산 흐름**: ① 결과가 ② 입력으로 정확히 사용되었는가.
+- **(f) 공식 정확성**: X_L = 2πfL, |Z| = √(R²+X²), θ = arctan(X/R) 등 공식이 회로 이론과 일치하는가 (부호·인자 포함).
+- **(g) 재계산 일치**: 모든 수치를 직접 재계산하여 보고서 값과 일치하는가.
+- **(h) 단위 표기**: 모든 수치에 단위(V/mA/Ω/μF/Hz/° 등)가 표기되었는가.
+- **(i) 정답-본문 일관성**: "정답" 섹션의 값이 본문 마지막 단계 결과와 일치하는가.
+- **(j) Calculated/Experimental Table 형식** (Type 3 Exercise 한정): 헤더가 `구분 | Calculated | Experimental` 형식인가. Calculated 열만 풀이값으로 채워졌고, **Experimental 칸은 *모두* "실험 측정값" placeholder를 유지하는가** (자동 채움 흔적이 있으면 FAIL).
+
+Q5 중간 산술 오류 정책 (system prompt 참조): 중간 표기와 정확값이 *최종 정답에서 동일 자리수*에서 같으면 PASS + "미세 표기 불일치" 메모. 최종 정답이 다르면 FAIL.
+
+## 출력 형식
+
+검토 결과를 `{output_dir}/result_review_exercise.md` 에 저장하세요.
+파일 형식:
+
+```
+## 연습 문제 검증
+
+- 섹션 위치: PASS 또는 FAIL (# 실험 결과 뒤 / # 고찰 앞 위치 여부)
+- Exercise 누락: PASS 또는 FAIL (누락 Exercise 식별자)
+- 입력 파싱: PASS 또는 FAIL (조건 불일치 항목)
+- 단위 변환: PASS 또는 FAIL (p-p ↔ rms 오류 위치)
+- 단계별 계산 흐름: PASS 또는 FAIL (앞→뒤 단계 불일치 위치)
+- 공식 정확성: PASS 또는 FAIL (잘못된 공식 위치)
+- 재계산 일치: PASS 또는 FAIL (보고서 값 vs 정확값)
+- 단위 표기: PASS 또는 FAIL (단위 누락 항목)
+- 정답-본문 일관성: PASS 또는 FAIL (불일치 Exercise)
+- Calculated/Experimental Table 형식 (해당 시): PASS 또는 FAIL (Experimental 자동 채움 흔적 시 FAIL — placeholder만 허용)
+
+### 발견된 오류 목록
+- [구체적 오류 항목, 없으면 "없음"]
+
+최종 판정: PASS
+```
+
+마지막 줄은 반드시 `최종 판정: PASS` 또는 `최종 판정: FAIL` 형식으로 끝내세요.
+오류가 하나라도 있으면 FAIL입니다.
+"""
+
+
+def _build_result_reviewer_phase3_prompt(
+    extra: str = "",
+    output_dir: Path = OUTPUT_DIR,
+) -> str:
+    """Phase 3 검토: # 고찰 섹션 품질 검토."""
     rework_section = ""
     if extra:
         rework_section = f"\n## 이전 검토 FAIL 항목 (재작업 반영 확인)\n{extra}\n"
@@ -467,7 +567,7 @@ def _build_result_reviewer_phase2_prompt(
     result_reports = _find_result_reports(output_dir=output_dir)
     report_list = "\n".join(f"  - {f}" for f in result_reports) or "  (없음)"
 
-    return f"""생성된 결과보고서의 **고찰 섹션**을 검토하세요 (Phase 2 검토).
+    return f"""생성된 결과보고서의 **고찰 섹션**을 검토하세요 (Phase 3 검토).
 {rework_section}
 ## 검토 대상
 
@@ -515,58 +615,48 @@ def _build_result_reviewer_phase2_prompt(
 """
 
 
-def _build_result_reviewer_prompt(extra: str = "", output_dir: Path = OUTPUT_DIR) -> str:
-    rework_section = ""
-    if extra:
-        rework_section = f"\n## 이전 검토 FAIL 항목\n{extra}\n"
-    docx_files = collect_docx_files()
-    book_list = "\n".join(f"  - {f}" for f in docx_files["book"]) or "  (없음)"
-    measurements = _find_measurements()
-    meas_list = (
-        "\n".join(f"  - {f}" for f in measurements)
-        if measurements
-        else "  (없음 - Measured 열 원본 대조 생략)"
-    )
-
-    return f"""생성된 결과보고서의 오차율 계산을 검증하세요.
-{rework_section}
-## 검토 대상
-
-`{output_dir}` 경로의 최신 결과보고서 (`*주차_결과보고서.md`)를 읽으세요.
-
-교재 스캔본 (input/book/) — Table 원형 확인용:
-{book_list}
-
-측정값 파일 (input/measured/) — Measured 열 원본 대조용:
-{meas_list}
-
-## 검증 항목
-
-1. **교재 Table 구조 대조**: 원본 Table의 행/열 라벨과 결과보고서 Table 구조가 일치하는지 확인
-2. **임의 열 추가/누락 검증**: 교재에 없는 `Calculated`, `Measured`, `%(Difference)` 열이 추가되었거나, 교재에 있는 행/열이 빠졌으면 FAIL
-3. **Measured 열 원본 대조**: `input/measured/` 의 측정값 파일이 있으면 읽고, 결과보고서 Table의 Measured 열 값이 원본 측정값과 일치하는지 1:1 비교 (옮겨 적기 누락·오기·단위 변환 오류 발견 시 FAIL). 측정값 파일이 없으면 "측정값 파일 없음 — 원본 대조 생략"으로 표기
-4. **오차율 공식**: 교재 Table이 계산값 비교 구조를 요구하는 경우에만 `|Calculated - Measured| / Calculated × 100 (%)` 계산 정확성 확인
-5. **Calculated 재계산**: 교재 Table이 계산값 비교 구조를 요구하는 경우에만 실측 소자값으로 올바르게 재계산되었는지 확인
-6. **측정 기반 산출값 검증**: 그래프 판독값, 측정 교차점, 특정 임계점, 특정 주파수/시간의 실측 데이터 기반 값을 이론 기준값으로 덮어쓰지 않았는지 확인
-7. **오차 원인 분석**: 저항 ±5% 등 허용 오차 범위 고려 여부
-
-## 출력 형식
-
-검토 결과를 `{output_dir}/result_review.md` 에 저장하세요.
-마지막 줄은 반드시 `최종 판정: PASS` 또는 `최종 판정: FAIL` 형식으로 끝내세요.
-측정값 파일이 존재하지 않는 것은 FAIL 사유가 아닙니다. 단, 파일이 있는데 보고서 Measured 값과 다르면 FAIL입니다.
-"""
-
-
 def _select_result_reviewer_prompt(
     extra: str = "",
     output_dir: Path = OUTPUT_DIR,
+    exercise_dir: Path = EXERCISE_DIR,
 ) -> tuple[str, Path, str]:
-    """result-reviewer 단독 실행 시 Phase를 자동 판별한다."""
+    """result-reviewer 단독 실행 시 Phase를 자동 판별한다.
+
+    분기 우선순위:
+      1. 보고서에 `# 고찰` 있음 → phase3 (고찰 review).
+      2. 보고서에 `# 연습 문제` 있음 → phase2 (연습 문제 review).
+      3. result_review_data.md PASS + exercise dir 비어있음 → phase3 (exercise-skip 경로).
+      4. 그 외 → phase1 (데이터 review).
+    """
     latest_report = _latest_result_report(output_dir=output_dir)
     if latest_report is not None and _has_discussion_section(latest_report):
-        return _build_result_reviewer_phase2_prompt(extra, output_dir=output_dir), output_dir / "result_review.md", "phase2"
-    return _build_result_reviewer_phase1_prompt(extra, output_dir=output_dir), output_dir / "result_review_data.md", "phase1"
+        return (
+            _build_result_reviewer_phase3_prompt(extra, output_dir=output_dir),
+            output_dir / "result_review.md",
+            "phase3",
+        )
+    if latest_report is not None and _has_exercise_section(latest_report):
+        return (
+            _build_result_reviewer_phase2_prompt(extra, output_dir=output_dir),
+            output_dir / "result_review_exercise.md",
+            "phase2",
+        )
+    # exercise-skip path: Phase 1 이미 PASS + exercise dir 비었으면 phase3로 직행
+    data_review = output_dir / "result_review_data.md"
+    if (
+        parse_review_verdict(data_review) == "PASS"
+        and not _exercise_files_present(exercise_dir=exercise_dir)
+    ):
+        return (
+            _build_result_reviewer_phase3_prompt(extra, output_dir=output_dir),
+            output_dir / "result_review.md",
+            "phase3",
+        )
+    return (
+        _build_result_reviewer_phase1_prompt(extra, output_dir=output_dir),
+        output_dir / "result_review_data.md",
+        "phase1",
+    )
 
 
 def build_prompt(role: str, extra: str = "") -> str:
@@ -575,7 +665,7 @@ def build_prompt(role: str, extra: str = "") -> str:
     if role == "pre-reviewer":
         return _build_pre_reviewer_prompt(extra)
     if role == "result-generator":
-        return _build_result_generator_prompt(extra)
+        return _build_result_generator_phase1_prompt(extra)
     if role == "result-reviewer":
         return _build_result_reviewer_phase1_prompt(extra)
     raise ValueError(f"알 수 없는 역할: {role}")

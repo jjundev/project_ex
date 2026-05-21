@@ -16,6 +16,25 @@ from .config import (
 )
 
 
+def _has_exercise_section(report_path: Path) -> bool:
+    """결과보고서에 '# 연습 문제' 섹션이 있는지 확인한다."""
+    if not report_path.exists():
+        return False
+    body = report_path.read_text(encoding="utf-8", errors="ignore")
+    return re.search(r"(?m)^\s*#\s*연습 문제\b", body) is not None
+
+
+def _exercise_files_present(exercise_dir: Path = EXERCISE_DIR) -> bool:
+    """input/exercise/에 처리 가능한 파일이 하나라도 있는지 확인한다."""
+    if not exercise_dir.exists():
+        return False
+    allowed = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp", ".pdf", ".md", ".txt"}
+    for f in exercise_dir.glob("*"):
+        if f.is_file() and f.suffix.lower() in allowed:
+            return True
+    return False
+
+
 def _has_expected_values_section(report_path: Path) -> bool:
     """예비보고서에 '## 예상 결과 값' 섹션이 있는지 확인한다."""
     if not report_path.exists():
@@ -67,12 +86,17 @@ def detect_pre_report_state(output_dir: Path = OUTPUT_DIR) -> dict:
 def detect_result_report_state(
     output_dir: Path = OUTPUT_DIR,
     measured_dir: Path = MEASURED_DIR,
+    exercise_dir: Path = EXERCISE_DIR,
 ) -> dict:
-    """결과보고서 파이프라인 현재 상태를 감지한다.
+    """결과보고서 파이프라인 현재 상태를 감지한다 (3-phase).
+
+    Phase 1 = 실험 결과 (result_review_data.md)
+    Phase 2 = 연습 문제 (result_review_exercise.md), input/exercise/ 비면 skip
+    Phase 3 = 고찰 (result_review.md)
 
     Returns:
         dict with keys:
-          - step: "p1g" | "p1r" | "p2g" | "p2r" | "done" | None (차단 시)
+          - step: "p1g" | "p1r" | "p2g" | "p2r" | "p3g" | "p3r" | "done" | None (차단 시)
           - label: 한국어 설명
           - error: None | str  — None이 아니면 실행 불가
     """
@@ -104,6 +128,7 @@ def detect_result_report_state(
     if not result_reports:
         return {"step": "p1g", "label": "처음부터 시작 (결과보고서 없음)", "error": None}
 
+    # ── Phase 1 (실험 결과) ──
     data_review = output_dir / "result_review_data.md"
     if not data_review.exists():
         return {"step": "p1r", "label": "Phase 1 검토 시작 (실험 결과 생성 완료)", "error": None}
@@ -112,23 +137,44 @@ def detect_result_report_state(
     if data_verdict == "FAIL":
         return {"step": "p1g", "label": "Phase 1 재생성 필요 (실험 결과 검토 FAIL)", "error": None}
 
-    # data_verdict == "PASS"
+    # Phase 1 PASS → Phase 2 (연습 문제) 분기
     latest_result = max(result_reports, key=lambda p: (p.stat().st_mtime, p.name))
+    has_exercise_input = _exercise_files_present(exercise_dir=exercise_dir)
+    has_exercise_section = _has_exercise_section(latest_result)
+
+    if has_exercise_input or has_exercise_section:
+        # Phase 2 활성 — 자료가 있거나 이미 작성된 섹션이 있음
+        if not has_exercise_section:
+            return {"step": "p2g", "label": "Phase 2 생성 시작 (연습 문제 섹션 미생성)", "error": None}
+
+        exercise_review = output_dir / "result_review_exercise.md"
+        if not exercise_review.exists():
+            return {"step": "p2r", "label": "Phase 2 검토 시작 (연습 문제 생성 완료)", "error": None}
+
+        exercise_verdict = parse_review_verdict(exercise_review)
+        if exercise_verdict == "FAIL":
+            return {"step": "p2g", "label": "Phase 2 재생성 필요 (연습 문제 검토 FAIL)", "error": None}
+        if exercise_verdict == "UNKNOWN":
+            return {"step": "p2g", "label": "Phase 2 상태 불명확 → Phase 2부터 재시작", "error": None}
+        # exercise_verdict == "PASS" → fall through to Phase 3
+    # Phase 2 자료 없고 섹션도 없음 → exercise-skip 경로로 Phase 3 직진
+
+    # ── Phase 3 (고찰) ──
     if not _has_discussion_section(latest_result):
-        return {"step": "p2g", "label": "Phase 2 생성 시작 (고찰 섹션 미생성)", "error": None}
+        return {"step": "p3g", "label": "Phase 3 생성 시작 (고찰 섹션 미생성)", "error": None}
 
     result_review = output_dir / "result_review.md"
     if not result_review.exists():
-        return {"step": "p2r", "label": "Phase 2 검토 시작 (고찰 생성 완료)", "error": None}
+        return {"step": "p3r", "label": "Phase 3 검토 시작 (고찰 생성 완료)", "error": None}
 
     result_verdict = parse_review_verdict(result_review)
     if result_verdict == "FAIL":
-        return {"step": "p2g", "label": "Phase 2 재생성 필요 (고찰 검토 FAIL)", "error": None}
+        return {"step": "p3g", "label": "Phase 3 재생성 필요 (고찰 검토 FAIL)", "error": None}
 
     if result_verdict == "PASS":
         return {"step": "done", "label": "결과보고서 완성됨", "error": None}
 
-    return {"step": "p2g", "label": "Phase 2 상태 불명확 → Phase 2부터 재시작", "error": None}
+    return {"step": "p3g", "label": "Phase 3 상태 불명확 → Phase 3부터 재시작", "error": None}
 
 
 def collect_docx_files(

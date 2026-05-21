@@ -156,14 +156,33 @@ def test_select_result_reviewer_prompt_phase1(tmp_path: Path, monkeypatch) -> No
     report = tmp_path / "15주차_결과보고서.md"
     report.write_text("# 15주차 결과보고서\n\n# 실험 결과\n\n데이터\n", encoding="utf-8")
 
+    # exercise dir 비어있으면 PASS 상태에서 phase3로 가지만, data_review가 없으므로 phase1.
     prompt, review_path, mode = harness._select_result_reviewer_prompt()
 
     assert mode == "phase1"
     assert review_path == tmp_path / "result_review_data.md"
-    assert "실험 결과 + 연습 문제 섹션" in prompt
+    assert "`# 실험 결과` 섹션" in prompt
 
 
-def test_select_result_reviewer_prompt_phase2(tmp_path: Path, monkeypatch) -> None:
+def test_select_result_reviewer_prompt_phase2_exercise(tmp_path: Path, monkeypatch) -> None:
+    """보고서에 `# 연습 문제`가 있고 `# 고찰`이 없으면 phase2(exercise) 자동 선택."""
+    monkeypatch.setattr(harness, "OUTPUT_DIR", tmp_path)
+
+    report = tmp_path / "15주차_결과보고서.md"
+    report.write_text(
+        "# 15주차 결과보고서\n\n# 실험 결과\n\n데이터\n\n# 연습 문제\n\n풀이\n",
+        encoding="utf-8",
+    )
+
+    prompt, review_path, mode = harness._select_result_reviewer_prompt()
+
+    assert mode == "phase2"
+    assert review_path == tmp_path / "result_review_exercise.md"
+    assert "`# 연습 문제` 섹션" in prompt
+
+
+def test_select_result_reviewer_prompt_phase3(tmp_path: Path, monkeypatch) -> None:
+    """보고서에 `# 고찰`이 있으면 phase3 자동 선택."""
     monkeypatch.setattr(harness, "OUTPUT_DIR", tmp_path)
 
     report = tmp_path / "15주차_결과보고서.md"
@@ -174,13 +193,40 @@ def test_select_result_reviewer_prompt_phase2(tmp_path: Path, monkeypatch) -> No
 
     prompt, review_path, mode = harness._select_result_reviewer_prompt()
 
-    assert mode == "phase2"
+    assert mode == "phase3"
     assert review_path == tmp_path / "result_review.md"
     assert "고찰 섹션" in prompt
 
 
-def test_result_generator_prompt_requires_book_table_structure() -> None:
-    prompt = prompts._build_result_generator_prompt()
+def test_select_result_reviewer_prompt_exercise_skip_routes_to_phase3(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """exercise dir 비어있고 Phase 1 PASS 상태에서 단독 reviewer는 phase3로 직행해야 한다.
+
+    Blocker Q11 회귀 방지. 과거 autodetect는 # 연습 문제 / # 고찰 모두 없을 때
+    무조건 phase1으로 재진입하여 이미 PASS된 데이터 검토를 다시 돌리고 phase3에
+    도달하지 못했다.
+    """
+    monkeypatch.setattr(harness, "OUTPUT_DIR", tmp_path)
+    empty_exercise_dir = tmp_path / "exercise"
+    empty_exercise_dir.mkdir()
+
+    report = tmp_path / "15주차_결과보고서.md"
+    report.write_text("# 15주차 결과보고서\n\n# 실험 결과\n\n데이터\n", encoding="utf-8")
+    (tmp_path / "result_review_data.md").write_text("최종 판정: PASS\n", encoding="utf-8")
+
+    prompt, review_path, mode = prompts._select_result_reviewer_prompt(
+        output_dir=tmp_path, exercise_dir=empty_exercise_dir
+    )
+
+    assert mode == "phase3"
+    assert review_path == tmp_path / "result_review.md"
+    assert "고찰 섹션" in prompt
+
+
+def test_result_generator_phase1_prompt_data_only() -> None:
+    """Phase 1 generator는 # 실험 결과 섹션만 작성하고 연습 문제·고찰은 금지."""
+    prompt = prompts._build_result_generator_phase1_prompt()
 
     assert "교재 스캔본 (input/book/) — Table 원형 확인용" in prompt
     assert "`input/book/` 이미지를 다시 읽어 각 교재 Table" in prompt
@@ -191,9 +237,13 @@ def test_result_generator_prompt_requires_book_table_structure() -> None:
     assert "`X = R`, `V = E/√2`, `τ = RC` 같은 이론식은 이론 기준값" in prompt
     assert "측정 기반 산출값을 덮어쓰지 마세요" in prompt
     assert "측정 기반 산출값인지, 명판값 기반 이론 계산인지, 실측 소자값 기반 재계산인지" in prompt
+    # Phase 1 boundary
+    assert "`# 실험 결과` 섹션만 작성합니다" in prompt
+    assert "`# 연습 문제` 섹션은 Phase 2에서" in prompt
 
 
-def test_result_reviewer_prompt_checks_book_table_structure(tmp_path: Path) -> None:
+def test_result_reviewer_phase1_prompt_data_only(tmp_path: Path) -> None:
+    """Phase 1 reviewer는 # 실험 결과 검증만. 연습 문제 검증은 Phase 2로 이동."""
     report = tmp_path / "15주차_결과보고서.md"
     report.write_text("# 15주차 결과보고서\n\n# 실험 결과\n\n데이터\n", encoding="utf-8")
 
@@ -207,72 +257,28 @@ def test_result_reviewer_prompt_checks_book_table_structure(tmp_path: Path) -> N
     assert "인접 측정점 보간 또는 명시된 판독 기준" in prompt
     assert "`X = R`, `V = E/√2`, `τ = RC` 같은 이론 기준값으로 단정" in prompt
     assert "Table 구조: PASS 또는 FAIL" in prompt
+    # Phase 1 reviewer는 연습 문제 검증을 더 이상 포함하지 않는다
+    assert "Calculated/Experimental Table 형식" not in prompt
+    assert "Exercise 누락" not in prompt
 
 
-def test_result_reviewer_phase2_prompt_checks_measured_vs_theory_discussion(tmp_path: Path) -> None:
-    report = tmp_path / "15주차_결과보고서.md"
-    report.write_text("# 15주차 결과보고서\n\n# 실험 결과\n\n데이터\n\n# 고찰\n\n분석\n", encoding="utf-8")
+def test_result_generator_phase2_prompt_exercise_only() -> None:
+    """Phase 2 generator는 # 연습 문제만 추가하고 # 실험 결과는 read-only."""
+    prompt = prompts._build_result_generator_phase2_prompt()
 
+    assert "`# 연습 문제` 섹션만" in prompt
+    assert "Phase 1에서 작성된 `# 실험 결과` 섹션은 절대 수정하지 마세요" in prompt
+    assert "삽입 위치 규칙" in prompt
+    assert "`# 고찰` 헤더가 있으면" in prompt
+    assert "파일 *맨 끝*에" in prompt
+    assert "실험 측정값" in prompt  # Type 3 Calculated/Experimental placeholder
+
+
+def test_result_reviewer_phase2_prompt_exercise_only(tmp_path: Path) -> None:
+    """Phase 2 reviewer는 # 연습 문제 10-항목 검증 + 섹션 위치."""
     prompt = prompts._build_result_reviewer_phase2_prompt(output_dir=tmp_path)
 
-    assert "측정값-이론값 구분" in prompt
-    assert "측정 기반 산출값과 이론 기준값의 차이를 단순 오류로 처리하지 않고" in prompt
-    assert "소자 오차, 계측 한계, 그래프 판독 오차" in prompt
-
-
-def test_result_generator_phase2_prompt_requires_measured_vs_theory_discussion() -> None:
-    prompt = prompts._build_result_generator_phase2_prompt()
-
-    assert "측정 기반 산출값과 이론 기준값이 다르면 단순 계산 오류로 단정하지 말고" in prompt
-    assert "보간값·판독값·이론 기준값을 구분" in prompt
-
-
-def test_result_generator_phase1_allows_exercise_section() -> None:
-    """Phase 1 generator prompt가 `# 연습 문제` 작성을 *허용* 하고 자료 목록을 노출해야 한다.
-
-    SKILL.md 정책(Phase 1에서 # 실험 결과 + # 연습 문제 작성)과 harness prompt 사이의
-    회귀를 막는다. 과거에는 prompt가 "# 연습 문제 미작성"을 명시적으로 강제해
-    11주차 결과보고서에서 연습 문제 섹션이 통째로 누락되었다.
-    """
-    prompt = prompts._build_result_generator_prompt()
-
-    assert "연습 문제 자료 (input/exercise/)" in prompt
-    assert "Step 3-11" in prompt
-    assert "실험 측정값" in prompt  # Type 3 Calculated/Experimental placeholder 정책
-    # 금지 가드가 부활하지 않았는지 (정확한 회귀 문자열)
-    assert "`# 연습 문제` 섹션도 작성하지 마세요" not in prompt
-    assert "`# 고찰`, `# 연습 문제` 미작성" not in prompt
-
-
-def test_result_generator_phase2_prompt_protects_phase1_sections() -> None:
-    """Phase 2 generator prompt는 `# 연습 문제` 신규 작성 금지가 아니라 *수정 금지* 정책이어야 한다.
-
-    Phase 1에서 PASS된 # 실험 결과 + # 연습 문제 섹션을 Phase 2 generator가 손대면
-    Phase 2 reviewer가 Phase 1 오류를 못 잡아 라운드 무한 반복이 발생할 수 있다.
-    """
-    prompt = prompts._build_result_generator_phase2_prompt()
-
-    assert "절대 수정하지 마세요" in prompt
-    assert "읽기 전용" in prompt
-    assert "끼워 넣지 마세요" in prompt
-    # 과거의 신규 작성 금지 가드가 부활하지 않았는지
-    assert "`# 연습 문제` 섹션은 작성하지 마세요" not in prompt
-
-
-def test_result_reviewer_phase1_prompt_includes_exercise_verification(tmp_path: Path) -> None:
-    """Reviewer Phase 1 prompt가 연습 문제 검증 10개 항목을 포함해야 한다.
-
-    SKILL.md result-review Step 6의 9개 항목 + 섹션 위치 검증. 11주차 회귀 당시
-    reviewer는 exercise 검증을 통째로 누락하고 PASS를 줬다.
-    """
-    report = tmp_path / "15주차_결과보고서.md"
-    report.write_text("# 15주차 결과보고서\n\n# 실험 결과\n\n데이터\n", encoding="utf-8")
-
-    prompt = prompts._build_result_reviewer_phase1_prompt(output_dir=tmp_path)
-
-    assert "연습 문제 자료 (input/exercise/)" in prompt
-    assert "연습 문제 검증" in prompt
-    # 10개 검증 항목의 핵심 키워드
+    assert "`# 연습 문제` 섹션" in prompt
     assert "섹션 위치" in prompt
     assert "Exercise 누락" in prompt
     assert "입력 파싱" in prompt
@@ -283,9 +289,31 @@ def test_result_reviewer_phase1_prompt_includes_exercise_verification(tmp_path: 
     assert "단위 표기" in prompt
     assert "정답-본문 일관성" in prompt
     assert "Calculated/Experimental Table 형식" in prompt
-    # Experimental placeholder 자동 채움 금지 정책
     assert "실험 측정값" in prompt
     assert "자동 채움" in prompt
+    assert "result_review_exercise.md" in prompt
+
+
+def test_result_generator_phase3_prompt_protects_phase1_and_phase2() -> None:
+    """Phase 3 generator는 고찰만 추가. Phase 1·2 섹션 모두 read-only."""
+    prompt = prompts._build_result_generator_phase3_prompt()
+
+    assert "`# 고찰` 섹션만" in prompt
+    assert "Phase 1에서 작성된 `# 실험 결과` 섹션과 Phase 2에서 작성된 `# 연습 문제` 섹션은 절대 수정하지 마세요" in prompt
+    assert "끼워 넣지 마세요" in prompt
+    assert "측정 기반 산출값과 이론 기준값이 다르면 단순 계산 오류로 단정하지 말고" in prompt
+    assert "보간값·판독값·이론 기준값을 구분" in prompt
+
+
+def test_result_reviewer_phase3_prompt_checks_measured_vs_theory_discussion(tmp_path: Path) -> None:
+    report = tmp_path / "15주차_결과보고서.md"
+    report.write_text("# 15주차 결과보고서\n\n# 실험 결과\n\n데이터\n\n# 고찰\n\n분석\n", encoding="utf-8")
+
+    prompt = prompts._build_result_reviewer_phase3_prompt(output_dir=tmp_path)
+
+    assert "측정값-이론값 구분" in prompt
+    assert "측정 기반 산출값과 이론 기준값의 차이를 단순 오류로 처리하지 않고" in prompt
+    assert "소자 오차, 계측 한계, 그래프 판독 오차" in prompt
 
 
 def test_result_skills_lock_table_16_5_and_16_6_structure() -> None:
