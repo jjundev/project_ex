@@ -32,9 +32,12 @@ from .prompts import (
     _build_pre_generator_phase2_prompt,
     _build_pre_reviewer_phase1_prompt,
     _build_pre_reviewer_prompt,
+    _build_result_generator_phase1_prompt,
     _build_result_generator_phase2_prompt,
+    _build_result_generator_phase3_prompt,
     _build_result_reviewer_phase1_prompt,
     _build_result_reviewer_phase2_prompt,
+    _build_result_reviewer_phase3_prompt,
     _select_result_reviewer_prompt,
     build_prompt,
 )
@@ -398,19 +401,26 @@ async def run_gan_loop(max_rounds: int = 3, start_step: str = "p1g") -> bool:
 
 
 async def run_result_loop(max_rounds: int = 3, start_step: str = "p1g") -> bool:
-    """result-generator ↔ result-reviewer 2단계 루프 (Phase 1: 실험 결과 / Phase 2: 고찰). PASS 시 True 반환.
+    """result-generator ↔ result-reviewer 3단계 루프. PASS 시 True 반환.
+
+    Phase 1 = 실험 결과 (result_review_data.md)
+    Phase 2 = 연습 문제 (result_review_exercise.md), input/exercise/ 비어있으면 skip
+    Phase 3 = 고찰 (result_review.md)
 
     start_step 값:
       p1g  Phase 1 생성부터 (기본값)
       p1r  Phase 1 검토부터 (1라운드에서 result-generator 건너뜀)
       p2g  Phase 2 생성부터 (Phase 1 전체 건너뜀)
       p2r  Phase 2 검토부터 (Phase 1 전체 건너뜀, 1라운드에서 result-generator 건너뜀)
+      p3g  Phase 3 생성부터 (Phase 1·2 전체 건너뜀)
+      p3r  Phase 3 검토부터 (Phase 1·2 전체 건너뜀, 1라운드에서 result-generator 건너뜀)
     """
     review_data_path = OUTPUT_DIR / "result_review_data.md"
+    review_exercise_path = OUTPUT_DIR / "result_review_exercise.md"
     review_path = OUTPUT_DIR / "result_review.md"
 
     # ── Phase 1: 실험 결과 ──────────────────────────────────────────────
-    if start_step not in ("p2g", "p2r"):
+    if start_step in ("p1g", "p1r"):
         _log("── 결과보고서 Phase 1: 실험 결과 ──")
         for round_num in range(1, max_rounds + 1):
             _log(f"── Phase 1 라운드 {round_num}/{max_rounds} ──")
@@ -429,7 +439,7 @@ async def run_result_loop(max_rounds: int = 3, start_step: str = "p1g") -> bool:
 
             skip_gen = (start_step == "p1r") and round_num == 1
             if not skip_gen:
-                await run_role("result-generator", p1_extra)
+                await run_role("result-generator", prompt_override=_build_result_generator_phase1_prompt(p1_extra))
             await run_role("result-reviewer", prompt_override=_build_result_reviewer_phase1_prompt(p1_extra))
 
             verdict = parse_review_verdict(review_data_path)
@@ -443,42 +453,105 @@ async def run_result_loop(max_rounds: int = 3, start_step: str = "p1g") -> bool:
                 _log_error(f"Phase 1 {max_rounds}라운드 후 FAIL — 수동 검토 필요")
                 return False
     else:
-        _log("── 결과보고서 Phase 1 건너뜀 (start_step: {start_step}) ──".format(start_step=start_step))
+        _log(f"── 결과보고서 Phase 1 건너뜀 (start_step: {start_step}) ──")
 
-    # ── Phase 2: 고찰 ──────────────────────────────────────────────────
-    _log("── 결과보고서 Phase 2: 고찰 ──")
+    # ── Phase 2: 연습 문제 ─────────────────────────────────────────────
+    exercise_files = collect_docx_files()["exercise"]
+    if start_step in ("p3g", "p3r"):
+        _log(f"── 결과보고서 Phase 2 건너뜀 (start_step: {start_step}) ──")
+    elif not exercise_files:
+        if start_step in ("p2g", "p2r"):
+            _log_error(
+                f"--start-step {start_step}로 Phase 2(연습 문제) 진입을 요청했지만 "
+                f"input/exercise/ 폴더에 자료가 없습니다."
+            )
+            return False
+        _log("── 연습 문제 자료 없음 — Phase 2 건너뜀 (exercise-skip) ──")
+    else:
+        _log("── 결과보고서 Phase 2: 연습 문제 ──")
+        for round_num in range(1, max_rounds + 1):
+            _log(f"── Phase 2 라운드 {round_num}/{max_rounds} ──")
+
+            p2_extra = ""
+            if round_num > 1:
+                archive = OUTPUT_DIR / f"result_review_exercise_round{round_num - 1}.md"
+                archived_path = _archive_if_exists(review_exercise_path, archive)
+                if archived_path is not None:
+                    _log(f"result_review_exercise.md → {archived_path.name}")
+                fail_summary = extract_fail_items(archived_path).strip() if archived_path is not None else ""
+                p2_extra = (
+                    f"재작업 모드. {round_num}번째 시도. "
+                    f"이전 연습 문제 검토에서 발견된 문제:\n{fail_summary}"
+                )
+
+            skip_gen = (start_step == "p2r") and round_num == 1
+            if not skip_gen:
+                await run_role("result-generator", prompt_override=_build_result_generator_phase2_prompt(p2_extra))
+            await run_role("result-reviewer", prompt_override=_build_result_reviewer_phase2_prompt(p2_extra))
+
+            verdict = parse_review_verdict(review_exercise_path)
+            _log(f"Phase 2 판정: {verdict}")
+
+            if verdict == "PASS":
+                _log("Phase 2 PASS — 연습 문제 확정")
+                break
+
+            if round_num == max_rounds:
+                _log_error(f"Phase 2 {max_rounds}라운드 후 FAIL — 수동 검토 필요")
+                return False
+
+    # ── Phase 3: 고찰 ──────────────────────────────────────────────────
+    _log("── 결과보고서 Phase 3: 고찰 ──")
     for round_num in range(1, max_rounds + 1):
-        _log(f"── Phase 2 라운드 {round_num}/{max_rounds} ──")
+        _log(f"── Phase 3 라운드 {round_num}/{max_rounds} ──")
 
-        p2_extra = ""
+        p3_extra = ""
         if round_num > 1:
             archive = OUTPUT_DIR / f"result_review_round{round_num - 1}.md"
             archived_path = _archive_if_exists(review_path, archive)
             if archived_path is not None:
                 _log(f"result_review.md → {archived_path.name}")
             fail_summary = extract_fail_items(archived_path).strip() if archived_path is not None else ""
-            p2_extra = (
+            p3_extra = (
                 f"재작업 모드. {round_num}번째 시도. "
                 f"이전 고찰 검토에서 발견된 문제:\n{fail_summary}"
             )
 
-        skip_gen = (start_step == "p2r") and round_num == 1
+        skip_gen = (start_step == "p3r") and round_num == 1
         if not skip_gen:
-            await run_role("result-generator", prompt_override=_build_result_generator_phase2_prompt(p2_extra))
-        await run_role("result-reviewer", prompt_override=_build_result_reviewer_phase2_prompt(p2_extra))
+            await run_role("result-generator", prompt_override=_build_result_generator_phase3_prompt(p3_extra))
+        await run_role("result-reviewer", prompt_override=_build_result_reviewer_phase3_prompt(p3_extra))
 
         verdict = parse_review_verdict(review_path)
-        _log(f"Phase 2 판정: {verdict}")
+        _log(f"Phase 3 판정: {verdict}")
 
         if verdict == "PASS":
-            _log("결과보고서 루프 PASS — 결과보고서 확정 (Phase 1+2)")
+            _log("결과보고서 루프 PASS — 결과보고서 확정 (Phase 1+2+3)")
             return True
 
         if round_num == max_rounds:
-            _log_error(f"Phase 2 {max_rounds}라운드 후 FAIL — 수동 검토 필요")
+            _log_error(f"Phase 3 {max_rounds}라운드 후 FAIL — 수동 검토 필요")
             return False
 
     return False
+
+
+def _validate_start_step_against_roles(start_step: str, roles: list[str]) -> None:
+    """start_step이 활성 roles의 첫 GAN loop에 의미있는 값인지 검증한다.
+
+    p3g/p3r 은 result-side 전용 phase로, pre-side가 먼저 도는 chain에서는 무효.
+    """
+    first_gan_loop_kind: str | None = None
+    if "pre-generator" in roles and "pre-reviewer" in roles:
+        first_gan_loop_kind = "pre"
+    elif "result-generator" in roles and "result-reviewer" in roles:
+        first_gan_loop_kind = "result"
+
+    if first_gan_loop_kind == "pre" and start_step in ("p3g", "p3r"):
+        raise HarnessError(
+            f"--start-step {start_step} 은 result-loop 전용입니다. "
+            f"예비보고서 loop는 p1/p2 단계만 가집니다."
+        )
 
 
 def _format_alias_line(category: str, alias_name: str, alias: ModelAlias) -> str:
@@ -519,7 +592,7 @@ def _print_dry_run_summary(
     if has_pre_gan:
         print("예비보고서 2단계: Phase 1 (이론) + Phase 2 (예상 결과 값)")
     if has_result_gan:
-        print("결과보고서 2단계: Phase 1 (실험 결과) + Phase 2 (고찰)")
+        print("결과보고서 3단계: Phase 1 (실험 결과) + Phase 2 (연습 문제) + Phase 3 (고찰)")
     if has_pre_gan or has_result_gan:
         print(f"최대 GAN 라운드 (Phase당): {max_rounds}")
         print(f"시작 스텝: {start_step}")
@@ -547,6 +620,8 @@ async def run_pipeline(
         raise HarnessError(f"--from ({from_role})이 --to ({to_role}) 이후입니다")
 
     roles = ROLE_ORDER[start_idx : end_idx + 1]
+
+    _validate_start_step_against_roles(start_step, roles)
 
     # 활성 preset 설정 (모듈 전역)
     global _ACTIVE_PRESET
@@ -603,13 +678,18 @@ async def run_pipeline(
     if "pre-generator" in roles or "result-generator" in roles:
         _log_input_summary(collect_docx_files())
 
+    # start_step은 활성 chain의 *첫* GAN loop에만 적용한다.
+    # 두 loop가 모두 활성이면 두번째 loop는 항상 p1g로 시작 (이전 loop가 완료된 직후).
+    start_step_for_next_loop = start_step
+
     i = 0
     while i < len(roles):
         role = roles[i]
 
         # pre GAN 루프 구간: pre-generator와 pre-reviewer가 모두 포함된 경우
         if role == "pre-generator" and "pre-reviewer" in roles[i:]:
-            success = await run_gan_loop(max_rounds=max_rounds, start_step=start_step)
+            success = await run_gan_loop(max_rounds=max_rounds, start_step=start_step_for_next_loop)
+            start_step_for_next_loop = "p1g"
             if not success:
                 _log_error("예비보고서 GAN 루프 실패. 파이프라인 중단.")
                 sys.exit(1)
@@ -619,7 +699,8 @@ async def run_pipeline(
 
         # result 루프 구간: result-generator와 result-reviewer가 모두 포함된 경우
         if role == "result-generator" and "result-reviewer" in roles[i:]:
-            success = await run_result_loop(max_rounds=max_rounds, start_step=start_step)
+            success = await run_result_loop(max_rounds=max_rounds, start_step=start_step_for_next_loop)
+            start_step_for_next_loop = "p1g"
             if not success:
                 _log_error("결과보고서 루프 실패. 파이프라인 중단.")
                 sys.exit(1)

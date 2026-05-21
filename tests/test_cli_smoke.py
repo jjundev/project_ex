@@ -26,7 +26,7 @@ def _run_harness(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]
     [
         (["--dry-run"], "실행 경로:"),
         (["--to", "pre-reviewer", "--dry-run"], "예비보고서 2단계"),
-        (["--from", "result-generator", "--dry-run"], "결과보고서 2단계"),
+        (["--from", "result-generator", "--dry-run"], "결과보고서 3단계"),
     ],
 )
 def test_cli_dry_run_smoke(args: list[str], expected_text: str) -> None:
@@ -42,7 +42,18 @@ def test_cli_dry_run_includes_full_pipeline_and_phase_guides() -> None:
     assert proc.returncode == 0
     assert "실행 경로: pre-generator → pre-reviewer → result-generator → result-reviewer" in proc.stdout
     assert "예비보고서 2단계: Phase 1 (이론) + Phase 2 (예상 결과 값)" in proc.stdout
-    assert "결과보고서 2단계: Phase 1 (실험 결과) + Phase 2 (고찰)" in proc.stdout
+    assert "결과보고서 3단계: Phase 1 (실험 결과) + Phase 2 (연습 문제) + Phase 3 (고찰)" in proc.stdout
+
+
+def test_cli_rejects_p3_start_step_for_pre_only_chain() -> None:
+    """p3g/p3r은 result-loop 전용 — pre-only chain에 적용하면 HarnessError."""
+    proc = _run_harness(
+        ["--to", "pre-reviewer", "--start-step", "p3g"],
+        PROJECT_DIR,
+    )
+
+    assert proc.returncode == 1
+    assert "result-loop 전용" in proc.stderr
 
 
 def test_result_reviewer_precheck_requires_result_report(tmp_path: Path) -> None:

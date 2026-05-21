@@ -63,18 +63,8 @@ def _archive_if_exists(src_path: Path, base_archive_path: Path) -> Path | None:
 
 
 def _select_result_reviewer_prompt(extra: str = "") -> tuple[str, Path, str]:
-    latest_report = _io_state._latest_result_report(output_dir=OUTPUT_DIR)
-    if latest_report is not None and _io_state._has_discussion_section(latest_report):
-        return (
-            _prompts._build_result_reviewer_phase2_prompt(extra, output_dir=OUTPUT_DIR),
-            OUTPUT_DIR / "result_review.md",
-            "phase2",
-        )
-    return (
-        _prompts._build_result_reviewer_phase1_prompt(extra, output_dir=OUTPUT_DIR),
-        OUTPUT_DIR / "result_review_data.md",
-        "phase1",
-    )
+    """결과보고서 단독 reviewer 실행 시 phase 자동 판별 (compat wrapper)."""
+    return _prompts._select_result_reviewer_prompt(extra, output_dir=OUTPUT_DIR)
 
 
 if __name__ == "__main__":

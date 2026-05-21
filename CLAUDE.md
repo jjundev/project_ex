@@ -45,9 +45,13 @@ python harness.py
 python harness.py --to pre-reviewer
 
 # 결과보고서만 (예비보고서 선행 필요).
-# 기존 결과보고서에 `# 연습 문제` 섹션이 누락된 경우(또는 input/exercise/ 신규 추가 시) 이 명령으로 재생성.
-# Phase 1+Phase 2 + reviewer 두 단계가 모두 재실행되므로 약 5~15분 + LLM 호출 비용이 발생한다.
+# 결과보고서는 3-phase(실험 결과 → 연습 문제 → 고찰) GAN 루프로 작성된다.
+# 모든 phase + 각 reviewer가 재실행되므로 약 8~20분 + LLM 호출 비용이 발생한다.
 python harness.py --from result-generator
+
+# 결과보고서 phase별 부분 재실행 (--start-step은 result-loop의 첫 단계에 적용)
+python harness.py --from result-generator --start-step p2g   # 연습 문제만 재작성 (Phase 1·3 건너뜀)
+python harness.py --from result-generator --start-step p3g   # 고찰만 재작성 (Phase 1·2 건너뜀)
 
 # GAN 루프 최대 횟수 지정
 python harness.py --to pre-reviewer --max-rounds 2
@@ -65,18 +69,22 @@ python harness.py --generator-model opus --reviewer-model gpt-5.5
 ### 파이프라인 역할 순서
 `pre-generator` → `pre-reviewer` → `result-generator` → `result-reviewer`
 
-예비보고서는 **2단계 GAN 루프**로 작성된다 (모델 컬럼은 카테고리 — 실제 alias는 `--model-preset` / `--generator-model` / `--reviewer-model`로 결정):
+예비보고서는 **2단계 GAN 루프**, 결과보고서는 **3단계 GAN 루프**로 작성된다 (모델 컬럼은 카테고리 — 실제 alias는 `--model-preset` / `--generator-model` / `--reviewer-model`로 결정):
 
 | 단계 | 역할 | 내용 | 카테고리 |
 |---|---|---|---|
-| Phase 1 생성 | `pre-generator` | 실험 목적·준비물·이론 작성 | generator |
-| Phase 1 검토 | `pre-reviewer` | 이론 섹션 완성도 검증 → `pre_review_theory.md` | reviewer |
-| Phase 2 생성 | `pre-generator` | 예상 결과 값 추가 | generator |
-| Phase 2 검토 | `pre-reviewer` | KVL/KCL 계산 검증 → `pre_review.md` | reviewer |
-| Phase 1 생성 | `result-generator` | 실험 결과 섹션 + 연습 문제 섹션 작성 (`input/exercise/` 있을 때) | generator |
-| Phase 1 검토 | `result-reviewer` | %(Difference) 수치 검증 + 연습 문제 10개 항목 검증 (섹션 위치 포함) → `result_review_data.md` | reviewer |
-| Phase 2 생성 | `result-generator` | 고찰 섹션 추가 | generator |
-| Phase 2 검토 | `result-reviewer` | 고찰 품질 검토 → `result_review.md` | reviewer |
+| 예비 Phase 1 생성 | `pre-generator` | 실험 목적·준비물·이론 작성 | generator |
+| 예비 Phase 1 검토 | `pre-reviewer` | 이론 섹션 완성도 검증 → `pre_review_theory.md` | reviewer |
+| 예비 Phase 2 생성 | `pre-generator` | 예상 결과 값 추가 | generator |
+| 예비 Phase 2 검토 | `pre-reviewer` | KVL/KCL 계산 검증 → `pre_review.md` | reviewer |
+| 결과 Phase 1 생성 | `result-generator` | `# 실험 결과` 섹션 작성 | generator |
+| 결과 Phase 1 검토 | `result-reviewer` | %(Difference) 수치 + Table 구조 검증 → `result_review_data.md` | reviewer |
+| 결과 Phase 2 생성 | `result-generator` | `# 연습 문제` 섹션 추가 (`input/exercise/` 있을 때만; 없으면 phase 전체 skip) | generator |
+| 결과 Phase 2 검토 | `result-reviewer` | 연습 문제 10개 항목 검증 + 섹션 위치 검증 → `result_review_exercise.md` | reviewer |
+| 결과 Phase 3 생성 | `result-generator` | `# 고찰` 섹션 추가 | generator |
+| 결과 Phase 3 검토 | `result-reviewer` | 고찰 품질 검토 → `result_review.md` | reviewer |
+
+`--start-step` 인자는 활성 chain의 *첫* GAN loop에 적용된다 (예비/결과 모두 활성이면 결과 loop는 항상 p1g부터). `p3g`/`p3r`은 결과 loop 전용으로, 예비 loop가 첫 loop면 `HarnessError`로 거부된다.
 
 ## 디렉토리 구조
 - `docx/` : 보고서 템플릿

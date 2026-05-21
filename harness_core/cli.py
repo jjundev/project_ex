@@ -64,9 +64,10 @@ def parse_args() -> argparse.Namespace:
         "--start-step",
         dest="start_step",
         default="p1g",
-        choices=["p1g", "p1r", "p2g", "p2r"],
-        help="GAN 루프 시작 스텝 (p1g: Phase1 생성부터, p1r: Phase1 검토부터, "
-             "p2g: Phase2 생성부터, p2r: Phase2 검토부터). default: p1g",
+        choices=["p1g", "p1r", "p2g", "p2r", "p3g", "p3r"],
+        help="GAN 루프 시작 스텝. 결과보고서 3-phase 의미: "
+             "p1=실험 결과 / p2=연습 문제 / p3=고찰. g=생성부터, r=검토부터. "
+             "p3g/p3r은 result-loop 전용 (예비보고서 loop에는 phase 3 없음). default: p1g",
     )
     parser.add_argument(
         "--model-preset",
