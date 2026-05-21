@@ -160,7 +160,7 @@ def test_select_result_reviewer_prompt_phase1(tmp_path: Path, monkeypatch) -> No
 
     assert mode == "phase1"
     assert review_path == tmp_path / "result_review_data.md"
-    assert "실험 결과 섹션" in prompt
+    assert "실험 결과 + 연습 문제 섹션" in prompt
 
 
 def test_select_result_reviewer_prompt_phase2(tmp_path: Path, monkeypatch) -> None:
@@ -225,6 +225,67 @@ def test_result_generator_phase2_prompt_requires_measured_vs_theory_discussion()
 
     assert "측정 기반 산출값과 이론 기준값이 다르면 단순 계산 오류로 단정하지 말고" in prompt
     assert "보간값·판독값·이론 기준값을 구분" in prompt
+
+
+def test_result_generator_phase1_allows_exercise_section() -> None:
+    """Phase 1 generator prompt가 `# 연습 문제` 작성을 *허용* 하고 자료 목록을 노출해야 한다.
+
+    SKILL.md 정책(Phase 1에서 # 실험 결과 + # 연습 문제 작성)과 harness prompt 사이의
+    회귀를 막는다. 과거에는 prompt가 "# 연습 문제 미작성"을 명시적으로 강제해
+    11주차 결과보고서에서 연습 문제 섹션이 통째로 누락되었다.
+    """
+    prompt = prompts._build_result_generator_prompt()
+
+    assert "연습 문제 자료 (input/exercise/)" in prompt
+    assert "Step 3-11" in prompt
+    assert "실험 측정값" in prompt  # Type 3 Calculated/Experimental placeholder 정책
+    # 금지 가드가 부활하지 않았는지 (정확한 회귀 문자열)
+    assert "`# 연습 문제` 섹션도 작성하지 마세요" not in prompt
+    assert "`# 고찰`, `# 연습 문제` 미작성" not in prompt
+
+
+def test_result_generator_phase2_prompt_protects_phase1_sections() -> None:
+    """Phase 2 generator prompt는 `# 연습 문제` 신규 작성 금지가 아니라 *수정 금지* 정책이어야 한다.
+
+    Phase 1에서 PASS된 # 실험 결과 + # 연습 문제 섹션을 Phase 2 generator가 손대면
+    Phase 2 reviewer가 Phase 1 오류를 못 잡아 라운드 무한 반복이 발생할 수 있다.
+    """
+    prompt = prompts._build_result_generator_phase2_prompt()
+
+    assert "절대 수정하지 마세요" in prompt
+    assert "읽기 전용" in prompt
+    assert "끼워 넣지 마세요" in prompt
+    # 과거의 신규 작성 금지 가드가 부활하지 않았는지
+    assert "`# 연습 문제` 섹션은 작성하지 마세요" not in prompt
+
+
+def test_result_reviewer_phase1_prompt_includes_exercise_verification(tmp_path: Path) -> None:
+    """Reviewer Phase 1 prompt가 연습 문제 검증 10개 항목을 포함해야 한다.
+
+    SKILL.md result-review Step 6의 9개 항목 + 섹션 위치 검증. 11주차 회귀 당시
+    reviewer는 exercise 검증을 통째로 누락하고 PASS를 줬다.
+    """
+    report = tmp_path / "15주차_결과보고서.md"
+    report.write_text("# 15주차 결과보고서\n\n# 실험 결과\n\n데이터\n", encoding="utf-8")
+
+    prompt = prompts._build_result_reviewer_phase1_prompt(output_dir=tmp_path)
+
+    assert "연습 문제 자료 (input/exercise/)" in prompt
+    assert "연습 문제 검증" in prompt
+    # 10개 검증 항목의 핵심 키워드
+    assert "섹션 위치" in prompt
+    assert "Exercise 누락" in prompt
+    assert "입력 파싱" in prompt
+    assert "단위 변환" in prompt
+    assert "단계별 계산 흐름" in prompt
+    assert "공식 정확성" in prompt
+    assert "재계산 일치" in prompt
+    assert "단위 표기" in prompt
+    assert "정답-본문 일관성" in prompt
+    assert "Calculated/Experimental Table 형식" in prompt
+    # Experimental placeholder 자동 채움 금지 정책
+    assert "실험 측정값" in prompt
+    assert "자동 채움" in prompt
 
 
 def test_result_skills_lock_table_16_5_and_16_6_structure() -> None:

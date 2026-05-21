@@ -44,7 +44,9 @@ python harness.py
 # 예비보고서만 (GAN 루프 포함)
 python harness.py --to pre-reviewer
 
-# 결과보고서만 (예비보고서 선행 필요)
+# 결과보고서만 (예비보고서 선행 필요).
+# 기존 결과보고서에 `# 연습 문제` 섹션이 누락된 경우(또는 input/exercise/ 신규 추가 시) 이 명령으로 재생성.
+# Phase 1+Phase 2 + reviewer 두 단계가 모두 재실행되므로 약 5~15분 + LLM 호출 비용이 발생한다.
 python harness.py --from result-generator
 
 # GAN 루프 최대 횟수 지정
@@ -72,7 +74,7 @@ python harness.py --generator-model opus --reviewer-model gpt-5.5
 | Phase 2 생성 | `pre-generator` | 예상 결과 값 추가 | generator |
 | Phase 2 검토 | `pre-reviewer` | KVL/KCL 계산 검증 → `pre_review.md` | reviewer |
 | Phase 1 생성 | `result-generator` | 실험 결과 섹션 + 연습 문제 섹션 작성 (`input/exercise/` 있을 때) | generator |
-| Phase 1 검토 | `result-reviewer` | %(Difference) 수치 검증 + 연습 문제 9개 항목 검증 → `result_review_data.md` | reviewer |
+| Phase 1 검토 | `result-reviewer` | %(Difference) 수치 검증 + 연습 문제 10개 항목 검증 (섹션 위치 포함) → `result_review_data.md` | reviewer |
 | Phase 2 생성 | `result-generator` | 고찰 섹션 추가 | generator |
 | Phase 2 검토 | `result-reviewer` | 고찰 품질 검토 → `result_review.md` | reviewer |
 
