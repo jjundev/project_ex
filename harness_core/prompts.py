@@ -240,6 +240,11 @@ def _build_result_generator_prompt(extra: str = "") -> str:
         if docx_files["stt"]
         else "  (없음)"
     )
+    exercise_list = (
+        "\n".join(f"  - {f}" for f in docx_files["exercise"])
+        if docx_files["exercise"]
+        else "  (없음 — `# 연습 문제` 섹션 생략)"
+    )
 
     rework_section = ""
     retry_section = ""
@@ -260,15 +265,16 @@ def _build_result_generator_prompt(extra: str = "") -> str:
 ### 작업 방식
 1. 위 기존 결과보고서를 Read로 먼저 읽으세요.
 2. `재작업 지시사항`에 명시된 FAIL 항목만 Edit으로 수정하세요. FAIL 목록에 없는 Table/항목은 변경하지 마세요.
-3. 수정에 필요한 경우에만 아래 입력 자료(교재 Table 원형, 측정값)를 선택적으로 다시 읽으세요.
+3. 수정에 필요한 경우에만 아래 입력 자료(교재 Table 원형, 측정값, 연습 문제)를 선택적으로 다시 읽으세요.
 4. 같은 파일에 덮어쓰기로 저장하세요.
 """
 
-    return f"""아래 자료를 사용하여 결과보고서 **Phase 1** (실험 결과)을 생성하세요.
+    return f"""아래 자료를 사용하여 결과보고서 **Phase 1** (실험 결과 + 연습 문제)을 생성하세요.
 
 > **주의**: 이번 단계에서는 `# 고찰` 섹션을 작성하지 마세요.
 > 고찰은 실험 결과 검토 통과 후 Phase 2에서 별도로 작성합니다.
-> `# 연습 문제` 섹션도 작성하지 마세요.
+> `# 연습 문제` 섹션은 `input/exercise/` 폴더에 자료가 있을 때만 작성합니다.
+> 자료가 없으면 `# 연습 문제` 섹션 자체를 생략하세요 (빈 헤더만 남기지 마세요).
 {rework_section}{retry_section}
 ## 입력 자료
 
@@ -280,6 +286,9 @@ def _build_result_generator_prompt(extra: str = "") -> str:
 
 ### 측정값 파일 (input/measured/)
 {meas_list}
+
+### 연습 문제 자료 (input/exercise/) — 이미지/PDF/MD/텍스트
+{exercise_list}
 
 ### 실험 영상 STT (참고용)
 {exp_list}
@@ -296,7 +305,7 @@ def _build_result_generator_prompt(extra: str = "") -> str:
 6. 교재가 그래프 판독값, 측정 교차점, 특정 임계점, 특정 주파수/시간의 실측 데이터 기반 값을 요구하면 먼저 측정값에서 좌표나 파생값을 산출하세요. `X = R`, `V = E/√2`, `τ = RC` 같은 이론식은 이론 기준값 또는 비교·해석용 값으로 분리하고, 측정 기반 산출값을 덮어쓰지 마세요.
 7. 표의 값이 측정 기반 산출값인지, 명판값 기반 이론 계산인지, 실측 소자값 기반 재계산인지 Table 앞 설명에 구분해 명시하세요.
 8. system prompt의 **Step 1~3** (예비보고서 로드, 실측값 입력, 실험 결과 작성)을 수행하세요.
-9. `# 실험 결과` 섹션만 작성하세요 (`# 고찰`, `# 연습 문제` 미작성).
+9. `# 실험 결과` 섹션을 작성하세요. `input/exercise/`에 자료가 있으면 그 *직후*(즉 `# 실험 결과` 다음, 향후 추가될 `# 고찰` *앞*)에 `# 연습 문제` 섹션을 system prompt **Step 3-11** 규칙(Ch 그룹화 자동 추론, `### Exercise N — 제목` 형식, ① ② ③ 단계 번호, 단위 변환 명시, Type 3 Calculated/Experimental Table의 Experimental 칸은 *항상* "실험 측정값" placeholder 유지)에 따라 작성하세요. 자료가 없으면 `# 연습 문제` 섹션 자체를 만들지 마세요. `# 고찰` 은 작성하지 마세요 (Phase 2).
 10. 최종 보고서는 `{OUTPUT_DIR}` 경로에 Markdown 파일로 저장하세요.
 11. 파일명 형식: `{{N}}주차_결과보고서.md`
 """
@@ -312,7 +321,8 @@ def _build_result_generator_phase2_prompt(extra: str = "") -> str:
 
     return f"""결과보고서에 **고찰 섹션만** 추가하세요 (Phase 2).
 
-> `# 연습 문제` 섹션은 작성하지 마세요.
+> **Phase 1에서 작성된 `# 실험 결과`와 `# 연습 문제` 섹션은 절대 수정하지 마세요** (헤더·표·계산·수치·sub-bullet 모두 읽기 전용).
+> Phase 1 검증이 이미 PASS된 상태이며, Phase 2에서 손대면 Phase 2 리뷰가 Phase 1 오류를 잡지 못해 라운드 무한 반복 위험이 있습니다.
 {rework_section}
 ## 현재 결과보고서 (Phase 1에서 작성된 파일)
 
@@ -320,7 +330,7 @@ def _build_result_generator_phase2_prompt(extra: str = "") -> str:
 
 ## 지시사항
 
-1. 현재 결과보고서를 읽어 `# 실험 결과` 섹션의 모든 Table 데이터와 %(Difference) 수치를 파악하세요.
+1. 현재 결과보고서를 읽어 `# 실험 결과` 섹션의 모든 Table 데이터와 %(Difference) 수치를 파악하세요. `# 연습 문제` 섹션이 있으면 그 내용도 파악(인용은 가능, 수정은 금지)하세요.
 2. system prompt의 **Step 4 (고찰 작성)** 지침에 따라 고찰을 작성하세요.
    - 결과 분석, 오차 원인, 개선 방안, 결론 소섹션 포함
    - 구체적인 %(Difference) 수치 인용 필수
@@ -328,7 +338,8 @@ def _build_result_generator_phase2_prompt(extra: str = "") -> str:
    - 측정 기반 산출값과 이론 기준값이 다르면 단순 계산 오류로 단정하지 말고, 보간값·판독값·이론 기준값을 구분해 차이를 정량적으로 설명
 3. 기존 결과보고서 파일을 **수정**하여 `# 고찰` 섹션을 반영하세요.
    - 파일에 `# 고찰` 섹션이 **이미 있으면 교체**하고, 없으면 파일 끝에 **추가**하세요.
-   - `# 실험 결과` 섹션은 변경하지 마세요.
+   - 위치 규칙: `# 연습 문제` 섹션이 있으면 그 *뒤*에, 없으면 `# 실험 결과` *뒤*에 `# 고찰`이 옵니다. 절대 `# 실험 결과`와 `# 연습 문제` 사이에 끼워 넣지 마세요.
+   - `# 실험 결과` 섹션과 `# 연습 문제` 섹션은 변경하지 마세요.
 4. 저장 후 완료를 보고하세요.
 """
 
@@ -347,6 +358,11 @@ def _build_result_reviewer_phase1_prompt(
     pre_list = "\n".join(f"  - {f}" for f in pre_reports) or "  (없음)"
     docx_files = collect_docx_files()
     book_list = "\n".join(f"  - {f}" for f in docx_files["book"]) or "  (없음)"
+    exercise_list = (
+        "\n".join(f"  - {f}" for f in docx_files["exercise"])
+        if docx_files["exercise"]
+        else "  (없음 — `# 연습 문제` 섹션 검증 생략)"
+    )
     measurements = _find_measurements()
     meas_list = (
         "\n".join(f"  - {f}" for f in measurements)
@@ -354,7 +370,7 @@ def _build_result_reviewer_phase1_prompt(
         else "  (없음 - Measured 열 원본 대조 생략)"
     )
 
-    return f"""생성된 결과보고서의 **실험 결과 섹션**을 검증하세요 (Phase 1 검토).
+    return f"""생성된 결과보고서의 **실험 결과 + 연습 문제 섹션**을 검증하세요 (Phase 1 검토).
 {rework_section}
 ## 검토 대상
 
@@ -370,9 +386,12 @@ def _build_result_reviewer_phase1_prompt(
 측정값 파일 (input/measured/) — Measured 열 원본 대조용:
 {meas_list}
 
+연습 문제 자료 (input/exercise/) — `# 연습 문제` 섹션 검증용:
+{exercise_list}
+
 ## 검증 항목
 
-`# 실험 결과` 섹션만 검토하세요 (고찰 섹션은 아직 없습니다):
+`# 실험 결과` 섹션 및 `# 연습 문제` 섹션(있는 경우)만 검토하세요 (고찰 섹션은 아직 없습니다):
 
 1. **교재 Table 구조 대조**: `input/book/` 원본의 Table 번호, 행/열 라벨, 작성 요구사항과 결과보고서 Table 구조가 일치하는지 확인
 2. **임의 열 추가/누락 검증**: 교재에 없는 `Calculated`, `Measured`, `%(Difference)` 열이 추가되었거나, 교재에 있는 행/열이 빠졌으면 FAIL
@@ -382,6 +401,20 @@ def _build_result_reviewer_phase1_prompt(
 6. **측정 기반 산출값 검증**: 교재가 그래프 판독값, 측정 교차점, 특정 임계점, 특정 주파수/시간의 실측 데이터 기반 값을 요구하면 인접 측정점 보간 또는 명시된 판독 기준으로 산출했는지 확인. 측정 기반 표를 `X = R`, `V = E/√2`, `τ = RC` 같은 이론 기준값으로 단정하거나 관계식만으로 채웠으면 FAIL
 7. **%(Difference) 검증**: 교재 Table이 계산값 비교 구조를 요구하는 경우에만 `|Calculated - Measured| / Calculated × 100` 공식으로 재계산
 8. **단위 일관성**: mA, V, kΩ, Ω, μF, s 등 단위 표기 여부
+9. **연습 문제 검증** (`input/exercise/` 폴더에 자료가 있을 때만 적용):
+   - **자료가 있는데 보고서에 `# 연습 문제` 섹션이 없으면 FAIL** (Exercise 누락). 자료가 없는데 섹션이 있으면 FAIL (환각 섹션).
+   - 섹션이 있으면 다음 10개 항목을 모두 검증한다 (system prompt `result-review` SKILL.md Step 6 + 섹션 위치):
+     - **(a) 섹션 위치**: `# 연습 문제`가 `# 실험 결과` *뒤*, (있다면) `# 고찰` *앞*에 위치하는가. 아니면 FAIL.
+     - **(b) Exercise 누락**: 입력 폴더의 모든 Exercise(이미지/PDF/MD)가 보고서에 작성되었는가.
+     - **(c) 입력 파싱**: 입력 자료의 *조건*(주어진 R, V, f 등)이 보고서 풀이에 정확히 반영되었는가 (단위 혼동 포함).
+     - **(d) 단위 변환**: p-p ↔ rms 변환에서 ×2√2, ÷2√2가 정확히 적용되었는가.
+     - **(e) 단계별 계산 흐름**: ① 결과가 ② 입력으로 정확히 사용되었는가.
+     - **(f) 공식 정확성**: X_L = 2πfL, |Z| = √(R²+X²), θ = arctan(X/R) 등 공식이 회로 이론과 일치하는가 (부호·인자 포함).
+     - **(g) 재계산 일치**: 모든 수치를 직접 재계산하여 보고서 값과 일치하는가.
+     - **(h) 단위 표기**: 모든 수치에 단위(V/mA/Ω/μF/Hz/° 등)가 표기되었는가.
+     - **(i) 정답-본문 일관성**: "정답" 섹션의 값이 본문 마지막 단계 결과와 일치하는가.
+     - **(j) Calculated/Experimental Table 형식** (Type 3 Exercise 한정): 헤더가 `구분 | Calculated | Experimental` 형식인가. Calculated 열만 풀이값으로 채워졌고, **Experimental 칸은 *모두* "실험 측정값" placeholder를 유지하는가** (자동 채움 흔적이 있으면 FAIL).
+   - Q5 중간 산술 오류 정책 (system prompt 참조): 중간 표기와 정확값이 *최종 정답에서 동일 자리수*에서 같으면 PASS + "미세 표기 불일치" 메모. 최종 정답이 다르면 FAIL.
 
 ## 출력 형식
 
@@ -397,6 +430,19 @@ def _build_result_reviewer_phase1_prompt(
 - Calculated 재계산: PASS 또는 FAIL (오류 내용)
 - %(Difference) 계산: PASS 또는 FAIL (오류 내용 및 올바른 값)
 
+### 연습 문제 검증
+(`input/exercise/` 자료가 없으면 이 블록 자체를 생략. 자료가 있으면 아래 10개 항목을 모두 표기.)
+- 섹션 위치: PASS 또는 FAIL (# 실험 결과 뒤 / # 고찰 앞 위치 여부)
+- Exercise 누락: PASS 또는 FAIL (누락 Exercise 식별자)
+- 입력 파싱: PASS 또는 FAIL (조건 불일치 항목)
+- 단위 변환: PASS 또는 FAIL (p-p ↔ rms 오류 위치)
+- 단계별 계산 흐름: PASS 또는 FAIL (앞→뒤 단계 불일치 위치)
+- 공식 정확성: PASS 또는 FAIL (잘못된 공식 위치)
+- 재계산 일치: PASS 또는 FAIL (보고서 값 vs 정확값)
+- 단위 표기: PASS 또는 FAIL (단위 누락 항목)
+- 정답-본문 일관성: PASS 또는 FAIL (불일치 Exercise)
+- Calculated/Experimental Table 형식 (해당 시): PASS 또는 FAIL (Experimental 자동 채움 흔적 시 FAIL)
+
 ### 발견된 오류 목록
 - [구체적 오류 항목, 없으면 "없음"]
 
@@ -406,6 +452,7 @@ def _build_result_reviewer_phase1_prompt(
 마지막 줄은 반드시 `최종 판정: PASS` 또는 `최종 판정: FAIL` 형식으로 끝내세요.
 오류가 하나라도 있으면 FAIL, %(Difference) > 20%인 항목은 별도 표시하여 측정값 재확인을 권고하세요.
 측정값 파일이 존재하지 않는 것은 FAIL 사유가 아닙니다. 단, 파일이 있는데 보고서 Measured 값과 다르면 FAIL입니다.
+`input/exercise/` 폴더가 비어있는데 `# 연습 문제` 섹션이 보고서에 *없는* 것은 정상(생략)이며 FAIL 사유가 아닙니다.
 """
 
 
