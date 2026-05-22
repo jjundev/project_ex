@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import harness
-from harness_core import prompts
+from harness_core import pipeline, prompts
 from harness_core.io_state import extract_pass_sections
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
@@ -333,6 +334,235 @@ def test_result_skills_lock_table_16_5_and_16_6_structure() -> None:
         assert "Table 16.6" in skill_text
         assert "`1τ`, `5τ`" in skill_text
         assert "Calculated`, `Measured`, `%(Difference)` 열" in skill_text
+
+
+def test_consume_previous_review_round1_no_file_fresh_start(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """round 1에 review 파일이 없으면 기존 동작과 동일하게 fresh start."""
+    monkeypatch.setattr(pipeline, "OUTPUT_DIR", tmp_path)
+    review_path = tmp_path / "pre_review_theory.md"
+
+    fail_summary, skip = pipeline._consume_previous_review(
+        review_path,
+        round_num=1,
+        archive_basename_template="pre_review_theory_round{}.md",
+    )
+
+    assert fail_summary == ""
+    assert skip is False
+    assert not (tmp_path / "pre_review_theory_round0.md").exists()
+
+
+def test_consume_previous_review_round1_pass_precondition_true_skips_phase(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """이전 실행 PASS + 보고서 섹션 유효 → phase 전체 skip 신호. active review는 보존."""
+    monkeypatch.setattr(pipeline, "OUTPUT_DIR", tmp_path)
+    review_path = tmp_path / "pre_review_theory.md"
+    review_path.write_text("## 검토\n최종 판정: PASS\n", encoding="utf-8")
+
+    fail_summary, skip = pipeline._consume_previous_review(
+        review_path,
+        round_num=1,
+        archive_basename_template="pre_review_theory_round{}.md",
+        pass_skip_precondition=lambda: True,
+    )
+
+    assert fail_summary == ""
+    assert skip is True
+    # PASS-skip 시 active review 보존 (다음 실행에서도 PASS로 인식하기 위함)
+    assert review_path.exists()
+
+
+def test_consume_previous_review_round1_pass_precondition_false_archives(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """PASS verdict이지만 보고서 섹션이 stale (상위 phase 재실행 등) → archive 후 fresh start."""
+    monkeypatch.setattr(pipeline, "OUTPUT_DIR", tmp_path)
+    review_path = tmp_path / "pre_review.md"
+    review_path.write_text("최종 판정: PASS\n", encoding="utf-8")
+
+    fail_summary, skip = pipeline._consume_previous_review(
+        review_path,
+        round_num=1,
+        archive_basename_template="pre_review_round{}.md",
+        pass_skip_precondition=lambda: False,
+    )
+
+    assert fail_summary == ""
+    assert skip is False
+    assert not review_path.exists()
+    assert (tmp_path / "pre_review_round0.md").exists()
+
+
+def test_consume_previous_review_round1_fail_archives_and_returns_body(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """round 1에 FAIL review 존재 → archive 후 본문 통째 반환, phase 진행."""
+    monkeypatch.setattr(pipeline, "OUTPUT_DIR", tmp_path)
+    review_path = tmp_path / "pre_review_theory.md"
+    body = "### 발견된 문제점\n- Ch X 항목 누락 — 강의노트 p.42 참조\n최종 판정: FAIL\n"
+    review_path.write_text(body, encoding="utf-8")
+
+    fail_summary, skip = pipeline._consume_previous_review(
+        review_path,
+        round_num=1,
+        archive_basename_template="pre_review_theory_round{}.md",
+        pass_skip_precondition=lambda: True,  # PASS-skip 대상이 아니므로 무시되어야 함
+    )
+
+    assert skip is False
+    assert "Ch X 항목 누락" in fail_summary
+    assert "최종 판정: FAIL" in fail_summary
+    assert not review_path.exists()
+    assert (tmp_path / "pre_review_theory_round0.md").exists()
+
+
+def test_consume_previous_review_round1_unknown_archives_and_returns_body(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """판정 줄이 없는 (UNKNOWN) review도 fresh start 대신 본문을 인계한다."""
+    monkeypatch.setattr(pipeline, "OUTPUT_DIR", tmp_path)
+    review_path = tmp_path / "pre_review_theory.md"
+    review_path.write_text("판정 줄이 없는 부분 작성된 검토 메모\n", encoding="utf-8")
+
+    fail_summary, skip = pipeline._consume_previous_review(
+        review_path,
+        round_num=1,
+        archive_basename_template="pre_review_theory_round{}.md",
+    )
+
+    assert skip is False
+    assert "판정 줄이 없는 부분 작성된 검토 메모" in fail_summary
+    assert (tmp_path / "pre_review_theory_round0.md").exists()
+
+
+def test_consume_previous_review_round1_archive_fail_inherits_body(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """active가 없어도 최신 archive review가 있으면 round 1에 인계한다."""
+    monkeypatch.setattr(pipeline, "OUTPUT_DIR", tmp_path)
+    review_path = tmp_path / "pre_review_theory.md"
+    archived_review = tmp_path / "pre_review_theory_round0.md"
+    archived_review.write_text("archive FAIL 본문\n최종 판정: FAIL\n", encoding="utf-8")
+
+    fail_summary, skip = pipeline._consume_previous_review(
+        review_path,
+        round_num=1,
+        archive_basename_template="pre_review_theory_round{}.md",
+    )
+
+    assert skip is False
+    assert "archive FAIL 본문" in fail_summary
+    assert archived_review.exists()
+
+
+def test_consume_previous_review_round1_newer_archive_wins_over_active(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """active보다 최신 archive가 있으면 최신 archive verdict을 기준으로 인계한다."""
+    monkeypatch.setattr(pipeline, "OUTPUT_DIR", tmp_path)
+    review_path = tmp_path / "pre_review_theory.md"
+    review_path.write_text("active PASS\n최종 판정: PASS\n", encoding="utf-8")
+    archived_review = tmp_path / "pre_review_theory_round0.md"
+    archived_review.write_text("newer archive FAIL\n최종 판정: FAIL\n", encoding="utf-8")
+    os.utime(review_path, (1_000, 1_000))
+    os.utime(archived_review, (2_000, 2_000))
+
+    fail_summary, skip = pipeline._consume_previous_review(
+        review_path,
+        round_num=1,
+        archive_basename_template="pre_review_theory_round{}.md",
+        pass_skip_precondition=lambda: True,
+    )
+
+    assert skip is False
+    assert "newer archive FAIL" in fail_summary
+    assert review_path.exists()
+    assert archived_review.exists()
+
+
+def test_consume_previous_review_round1_archive_pass_can_skip(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """최신 archive review가 PASS이고 섹션 guard가 통과하면 phase를 건너뛴다."""
+    monkeypatch.setattr(pipeline, "OUTPUT_DIR", tmp_path)
+    review_path = tmp_path / "pre_review_theory.md"
+    archived_review = tmp_path / "pre_review_theory_round0.md"
+    archived_review.write_text("최종 판정: PASS\n", encoding="utf-8")
+
+    fail_summary, skip = pipeline._consume_previous_review(
+        review_path,
+        round_num=1,
+        archive_basename_template="pre_review_theory_round{}.md",
+        pass_skip_precondition=lambda: True,
+    )
+
+    assert fail_summary == ""
+    assert skip is True
+    assert archived_review.exists()
+
+
+def test_consume_previous_review_round2_archives_as_round1(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """round 2 이상: 기존 동작 유지 — review_path를 _round{N-1}로 archive."""
+    monkeypatch.setattr(pipeline, "OUTPUT_DIR", tmp_path)
+    review_path = tmp_path / "pre_review_theory.md"
+    review_path.write_text("최종 판정: FAIL\n발견된 오류 본문\n", encoding="utf-8")
+
+    fail_summary, skip = pipeline._consume_previous_review(
+        review_path,
+        round_num=2,
+        archive_basename_template="pre_review_theory_round{}.md",
+    )
+
+    assert skip is False
+    assert "발견된 오류 본문" in fail_summary
+    assert not review_path.exists()
+    assert (tmp_path / "pre_review_theory_round1.md").exists()
+
+
+def test_format_rework_extra_round1_signals_inheritance() -> None:
+    extra = pipeline._format_rework_extra(
+        1, "이전 이론 검토에서 발견된 문제", "FAIL 본문 내용"
+    )
+    assert "이전 실행에서 인계" in extra
+    assert "이전 이론 검토에서 발견된 문제" in extra
+    assert "FAIL 본문 내용" in extra
+    assert "번째 시도" not in extra
+
+
+def test_format_rework_extra_round2_signals_attempt_count() -> None:
+    extra = pipeline._format_rework_extra(2, "이전 KVL/KCL 오류", "내용")
+    assert "2번째 시도" in extra
+    assert "이전 KVL/KCL 오류" in extra
+    assert "내용" in extra
+
+
+def test_pre_generator_rework_prompt_uses_latest_review_for_pass_sections(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """재작업 prompt도 active/archive 중 mtime 최신 review로 PASS 섹션을 추출한다."""
+    monkeypatch.setattr(prompts, "OUTPUT_DIR", tmp_path)
+    active_review = tmp_path / "pre_review_theory.md"
+    active_review.write_text(
+        "### 실험 목적\n- 판정: PASS\n### 발견된 문제점\n최종 판정: FAIL\n",
+        encoding="utf-8",
+    )
+    archived_review = tmp_path / "pre_review_theory_round0.md"
+    archived_review.write_text(
+        "### 실험 준비물\n- 판정: PASS\n### 발견된 문제점\n최종 판정: FAIL\n",
+        encoding="utf-8",
+    )
+    os.utime(active_review, (1_000, 1_000))
+    os.utime(archived_review, (2_000, 2_000))
+
+    prompt = prompts._build_pre_generator_prompt("이전 실행 FAIL 본문")
+
+    assert "  - 실험 준비물" in prompt
+    assert "  - 실험 목적" not in prompt
 
 
 def test_result_skills_distinguish_measured_derived_values_from_theory() -> None:

@@ -1,6 +1,7 @@
 """io_state 상태 감지 함수 테스트."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,9 @@ from harness_core.io_state import (
     _exercise_files_present,
     _has_exercise_section,
     _has_expected_values_section,
+    _has_pre_phase1_sections,
+    _has_result_data_section,
+    _latest_pre_report,
     detect_pre_report_state,
     detect_result_report_state,
 )
@@ -24,6 +28,12 @@ def test_has_expected_values_section_true(tmp_path: Path) -> None:
     assert _has_expected_values_section(report) is True
 
 
+def test_has_expected_values_section_accepts_top_level_heading(tmp_path: Path) -> None:
+    report = tmp_path / "예비보고서.md"
+    report.write_text("# 제목\n\n# 예상 결과 값\n\n| V1 | 5V |\n", encoding="utf-8")
+    assert _has_expected_values_section(report) is True
+
+
 def test_has_expected_values_section_false(tmp_path: Path) -> None:
     report = tmp_path / "예비보고서.md"
     report.write_text("# 제목\n\n## 실험 이론\n\n텍스트\n", encoding="utf-8")
@@ -32,6 +42,38 @@ def test_has_expected_values_section_false(tmp_path: Path) -> None:
 
 def test_has_expected_values_section_missing_file(tmp_path: Path) -> None:
     assert _has_expected_values_section(tmp_path / "없는파일.md") is False
+
+
+def test_has_pre_phase1_sections_requires_all_three_sections(tmp_path: Path) -> None:
+    report = tmp_path / "예비보고서.md"
+    report.write_text(
+        "# 제목\n\n# 실험 목적\n\n# 실험 준비물\n\n# 실험 이론\n",
+        encoding="utf-8",
+    )
+    assert _has_pre_phase1_sections(report) is True
+
+    report.write_text("# 제목\n\n# 실험 목적\n\n# 실험 이론\n", encoding="utf-8")
+    assert _has_pre_phase1_sections(report) is False
+
+
+def test_has_result_data_section(tmp_path: Path) -> None:
+    report = tmp_path / "결과보고서.md"
+    report.write_text("# 제목\n\n# 실험 결과\n\n데이터\n", encoding="utf-8")
+    assert _has_result_data_section(report) is True
+
+    report.write_text("# 제목\n\n# 고찰\n\n내용\n", encoding="utf-8")
+    assert _has_result_data_section(report) is False
+
+
+def test_latest_pre_report_uses_mtime_not_lexicographic_order(tmp_path: Path) -> None:
+    lexicographic_later = tmp_path / "9주차_예비보고서.md"
+    mtime_later = tmp_path / "13주차_예비보고서.md"
+    lexicographic_later.write_text("# old\n", encoding="utf-8")
+    mtime_later.write_text("# new\n", encoding="utf-8")
+    os.utime(lexicographic_later, (1_000, 1_000))
+    os.utime(mtime_later, (2_000, 2_000))
+
+    assert _latest_pre_report(output_dir=tmp_path) == mtime_later
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +125,20 @@ def test_detect_pre_report_state_theory_pass_expected_values_no_calc_review(tmp_
     result = detect_pre_report_state(output_dir=tmp_path)
     assert result["step"] == "p2r"
     assert result["error"] is None
+
+
+def test_detect_pre_report_state_uses_latest_pre_report_by_mtime(tmp_path: Path) -> None:
+    lexicographic_later = tmp_path / "9주차_예비보고서.md"
+    mtime_later = tmp_path / "13주차_예비보고서.md"
+    lexicographic_later.write_text("# 예비보고서\n# 예상 결과 값\n", encoding="utf-8")
+    mtime_later.write_text("# 예비보고서\n# 실험 목적\n", encoding="utf-8")
+    os.utime(lexicographic_later, (1_000, 1_000))
+    os.utime(mtime_later, (2_000, 2_000))
+    _make_pass_review(tmp_path / "pre_review_theory.md")
+
+    result = detect_pre_report_state(output_dir=tmp_path)
+
+    assert result["step"] == "p2g"
 
 
 def test_detect_pre_report_state_done(tmp_path: Path) -> None:

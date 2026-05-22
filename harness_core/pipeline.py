@@ -4,6 +4,7 @@ import asyncio
 import sys
 import time
 from pathlib import Path
+from typing import Callable
 
 from .config import (
     DEFAULT_MODEL_PRESET,
@@ -24,6 +25,14 @@ from .io_state import (
     _find_measurements,
     _find_pre_reports,
     _find_result_reports,
+    _has_discussion_section,
+    _has_exercise_section,
+    _has_expected_values_section,
+    _has_pre_phase1_sections,
+    _has_result_data_section,
+    _latest_pre_report,
+    _latest_result_report,
+    _latest_review_file,
     collect_docx_files,
     extract_fail_items,
     parse_review_verdict,
@@ -316,6 +325,90 @@ async def _codex_healthcheck(
     _log(f"Codex preflight OK (model={model})")
 
 
+def _consume_previous_review(
+    review_path: Path,
+    round_num: int,
+    archive_basename_template: str,
+    pass_skip_precondition: Callable[[], bool] | None = None,
+) -> tuple[str, bool]:
+    """라운드 시작 시 이전 review 파일을 처리한다.
+
+    Round 1 (새 실행의 첫 라운드):
+      - active/archive review 파일 없음 → ("", False), fresh start (기존 동작과 동일).
+      - PASS + precondition() True → ("", True), phase 전체 skip 신호 (이전 실행에서 완료).
+      - PASS + precondition() False → 보고서 상태가 review와 불일치 (상위 phase 재실행 등).
+                                       active는 archive 후, archive는 유지 후 ("", False)로 진행.
+      - FAIL / UNKNOWN → active는 archive (_round0) 후, archive는 유지 후 review 본문을
+                         FAIL summary로 반환.
+
+    Round ≥ 2: 기존 동작. review_path를 `_round{N-1}.md`로 archive하고 본문을 반환.
+
+    archive_basename_template: e.g. ``"pre_review_theory_round{}.md"``.
+    pass_skip_precondition: PASS-skip을 허용하기 전에 보고서가 해당 phase 결과물(섹션)을
+        실제로 가지고 있는지 확인하는 콜러블. None이면 항상 허용.
+    """
+    if round_num == 1:
+        archive_glob = archive_basename_template.format("*")
+        previous_review = _latest_review_file(review_path, archive_glob)
+        if previous_review is None:
+            return ("", False)
+
+        verdict = parse_review_verdict(previous_review)
+
+        if verdict == "PASS":
+            if pass_skip_precondition is None or pass_skip_precondition():
+                _log(f"{previous_review.name}: 이전 실행 PASS — phase 건너뜀 (인계)")
+                return ("", True)
+            archived = previous_review
+            if previous_review == review_path:
+                archive_path = OUTPUT_DIR / archive_basename_template.format(0)
+                archived = _archive_if_exists(review_path, archive_path)
+            if archived is not None:
+                action = (
+                    f"{archived.name}로 보관"
+                    if previous_review == review_path
+                    else f"{archived.name} 유지"
+                )
+                _log(
+                    f"{previous_review.name}: PASS이지만 보고서 섹션 누락 — "
+                    f"{action} 후 fresh start"
+                )
+            return ("", False)
+
+        # FAIL or UNKNOWN: archive and feed body back as rework guidance
+        archived = previous_review
+        if previous_review == review_path:
+            archive_path = OUTPUT_DIR / archive_basename_template.format(0)
+            archived = _archive_if_exists(review_path, archive_path)
+        if archived is not None:
+            if previous_review == review_path:
+                _log(
+                    f"{review_path.name} → {archived.name} "
+                    f"(이전 실행 인계, verdict={verdict})"
+                )
+            else:
+                _log(f"{archived.name} 인계 (verdict={verdict})")
+        fail_summary = extract_fail_items(archived).strip() if archived else ""
+        return (fail_summary, False)
+
+    # round_num >= 2: archive current active review as _round{N-1} (existing behavior)
+    archive_path = OUTPUT_DIR / archive_basename_template.format(round_num - 1)
+    archived = _archive_if_exists(review_path, archive_path)
+    if archived is not None:
+        _log(f"{review_path.name} → {archived.name}")
+    fail_summary = extract_fail_items(archived).strip() if archived else ""
+    return (fail_summary, False)
+
+
+def _format_rework_extra(round_num: int, label: str, fail_summary: str) -> str:
+    """rework 모드용 generator/reviewer extra 문자열을 만든다."""
+    if round_num == 1:
+        prefix = "재작업 모드 (이전 실행에서 인계)."
+    else:
+        prefix = f"재작업 모드. {round_num}번째 시도."
+    return f"{prefix} {label}:\n{fail_summary}"
+
+
 async def run_gan_loop(max_rounds: int = 3, start_step: str = "p1g") -> bool:
     """Generator ↔ Reviewer 2단계 루프 (Phase 1: 이론 / Phase 2: 예상 결과 값). PASS 시 True 반환.
 
@@ -331,20 +424,28 @@ async def run_gan_loop(max_rounds: int = 3, start_step: str = "p1g") -> bool:
     # ── Phase 1: 실험 목적·준비물·이론 ─────────────────────────────────
     if start_step not in ("p2g", "p2r"):
         _log("── Phase 1: 실험 목적·준비물·이론 ──")
+        phase1_skipped_from_pass = False
         for round_num in range(1, max_rounds + 1):
+            fail_summary, skip_phase = _consume_previous_review(
+                review_theory_path,
+                round_num,
+                "pre_review_theory_round{}.md",
+                pass_skip_precondition=lambda: (
+                    (latest := _latest_pre_report(output_dir=OUTPUT_DIR)) is not None
+                    and _has_pre_phase1_sections(latest)
+                ),
+            )
+            if skip_phase:
+                phase1_skipped_from_pass = True
+                break
+
             _log(f"── Phase 1 라운드 {round_num}/{max_rounds} ──")
 
-            p1_extra = ""
-            if round_num > 1:
-                archive = OUTPUT_DIR / f"pre_review_theory_round{round_num - 1}.md"
-                archived_path = _archive_if_exists(review_theory_path, archive)
-                if archived_path is not None:
-                    _log(f"pre_review_theory.md → {archived_path.name}")
-                fail_summary = extract_fail_items(archived_path).strip() if archived_path is not None else ""
-                p1_extra = (
-                    f"재작업 모드. {round_num}번째 시도. "
-                    f"이전 이론 검토에서 발견된 문제:\n{fail_summary}"
-                )
+            p1_extra = (
+                _format_rework_extra(round_num, "이전 이론 검토에서 발견된 문제", fail_summary)
+                if fail_summary
+                else ""
+            )
 
             skip_gen = (start_step == "p1r") and round_num == 1
             if not skip_gen:
@@ -361,25 +462,38 @@ async def run_gan_loop(max_rounds: int = 3, start_step: str = "p1g") -> bool:
             if round_num == max_rounds:
                 _log_error(f"Phase 1 {max_rounds}라운드 후 FAIL — 수동 검토 필요")
                 return False
+
+        if phase1_skipped_from_pass:
+            _log("Phase 1 — 이전 실행에서 PASS 인계, 건너뜀")
     else:
         _log("── Phase 1 건너뜀 (start_step: {start_step}) ──".format(start_step=start_step))
 
     # ── Phase 2: 예상 결과 값 ──────────────────────────────────────────
     _log("── Phase 2: 예상 결과 값 ──")
+
+    def _pre_phase2_precondition() -> bool:
+        latest = _latest_pre_report(output_dir=OUTPUT_DIR)
+        return latest is not None and _has_expected_values_section(latest)
+
     for round_num in range(1, max_rounds + 1):
+        fail_summary, skip_phase = _consume_previous_review(
+            review_calc_path,
+            round_num,
+            "pre_review_round{}.md",
+            pass_skip_precondition=_pre_phase2_precondition,
+        )
+        if skip_phase:
+            _log("Phase 2 — 이전 실행에서 PASS 인계, 건너뜀")
+            _log("GAN 루프 PASS — 예비보고서 확정 (Phase 1+2)")
+            return True
+
         _log(f"── Phase 2 라운드 {round_num}/{max_rounds} ──")
 
-        p2_extra = ""
-        if round_num > 1:
-            archive = OUTPUT_DIR / f"pre_review_round{round_num - 1}.md"
-            archived_path = _archive_if_exists(review_calc_path, archive)
-            if archived_path is not None:
-                _log(f"pre_review.md → {archived_path.name}")
-            fail_summary = extract_fail_items(archived_path).strip() if archived_path is not None else ""
-            p2_extra = (
-                f"재작업 모드. {round_num}번째 시도. "
-                f"이전 검토에서 발견된 KVL/KCL 오류:\n{fail_summary}"
-            )
+        p2_extra = (
+            _format_rework_extra(round_num, "이전 검토에서 발견된 KVL/KCL 오류", fail_summary)
+            if fail_summary
+            else ""
+        )
 
         skip_gen = (start_step == "p2r") and round_num == 1
         if not skip_gen:
@@ -422,20 +536,28 @@ async def run_result_loop(max_rounds: int = 3, start_step: str = "p1g") -> bool:
     # ── Phase 1: 실험 결과 ──────────────────────────────────────────────
     if start_step in ("p1g", "p1r"):
         _log("── 결과보고서 Phase 1: 실험 결과 ──")
+        phase1_skipped_from_pass = False
         for round_num in range(1, max_rounds + 1):
+            fail_summary, skip_phase = _consume_previous_review(
+                review_data_path,
+                round_num,
+                "result_review_data_round{}.md",
+                pass_skip_precondition=lambda: (
+                    (latest := _latest_result_report(output_dir=OUTPUT_DIR)) is not None
+                    and _has_result_data_section(latest)
+                ),
+            )
+            if skip_phase:
+                phase1_skipped_from_pass = True
+                break
+
             _log(f"── Phase 1 라운드 {round_num}/{max_rounds} ──")
 
-            p1_extra = ""
-            if round_num > 1:
-                archive = OUTPUT_DIR / f"result_review_data_round{round_num - 1}.md"
-                archived_path = _archive_if_exists(review_data_path, archive)
-                if archived_path is not None:
-                    _log(f"result_review_data.md → {archived_path.name}")
-                fail_summary = extract_fail_items(archived_path).strip() if archived_path is not None else ""
-                p1_extra = (
-                    f"재작업 모드. {round_num}번째 시도. "
-                    f"이전 검토에서 발견된 오류:\n{fail_summary}"
-                )
+            p1_extra = (
+                _format_rework_extra(round_num, "이전 검토에서 발견된 오류", fail_summary)
+                if fail_summary
+                else ""
+            )
 
             skip_gen = (start_step == "p1r") and round_num == 1
             if not skip_gen:
@@ -452,6 +574,9 @@ async def run_result_loop(max_rounds: int = 3, start_step: str = "p1g") -> bool:
             if round_num == max_rounds:
                 _log_error(f"Phase 1 {max_rounds}라운드 후 FAIL — 수동 검토 필요")
                 return False
+
+        if phase1_skipped_from_pass:
+            _log("결과보고서 Phase 1 — 이전 실행에서 PASS 인계, 건너뜀")
     else:
         _log(f"── 결과보고서 Phase 1 건너뜀 (start_step: {start_step}) ──")
 
@@ -469,20 +594,30 @@ async def run_result_loop(max_rounds: int = 3, start_step: str = "p1g") -> bool:
         _log("── 연습 문제 자료 없음 — Phase 2 건너뜀 (exercise-skip) ──")
     else:
         _log("── 결과보고서 Phase 2: 연습 문제 ──")
+
+        def _result_phase2_precondition() -> bool:
+            latest = _latest_result_report(output_dir=OUTPUT_DIR)
+            return latest is not None and _has_exercise_section(latest)
+
+        phase2_skipped_from_pass = False
         for round_num in range(1, max_rounds + 1):
+            fail_summary, skip_phase = _consume_previous_review(
+                review_exercise_path,
+                round_num,
+                "result_review_exercise_round{}.md",
+                pass_skip_precondition=_result_phase2_precondition,
+            )
+            if skip_phase:
+                phase2_skipped_from_pass = True
+                break
+
             _log(f"── Phase 2 라운드 {round_num}/{max_rounds} ──")
 
-            p2_extra = ""
-            if round_num > 1:
-                archive = OUTPUT_DIR / f"result_review_exercise_round{round_num - 1}.md"
-                archived_path = _archive_if_exists(review_exercise_path, archive)
-                if archived_path is not None:
-                    _log(f"result_review_exercise.md → {archived_path.name}")
-                fail_summary = extract_fail_items(archived_path).strip() if archived_path is not None else ""
-                p2_extra = (
-                    f"재작업 모드. {round_num}번째 시도. "
-                    f"이전 연습 문제 검토에서 발견된 문제:\n{fail_summary}"
-                )
+            p2_extra = (
+                _format_rework_extra(round_num, "이전 연습 문제 검토에서 발견된 문제", fail_summary)
+                if fail_summary
+                else ""
+            )
 
             skip_gen = (start_step == "p2r") and round_num == 1
             if not skip_gen:
@@ -500,22 +635,35 @@ async def run_result_loop(max_rounds: int = 3, start_step: str = "p1g") -> bool:
                 _log_error(f"Phase 2 {max_rounds}라운드 후 FAIL — 수동 검토 필요")
                 return False
 
+        if phase2_skipped_from_pass:
+            _log("결과보고서 Phase 2 — 이전 실행에서 PASS 인계, 건너뜀")
+
     # ── Phase 3: 고찰 ──────────────────────────────────────────────────
     _log("── 결과보고서 Phase 3: 고찰 ──")
+
+    def _result_phase3_precondition() -> bool:
+        latest = _latest_result_report(output_dir=OUTPUT_DIR)
+        return latest is not None and _has_discussion_section(latest)
+
     for round_num in range(1, max_rounds + 1):
+        fail_summary, skip_phase = _consume_previous_review(
+            review_path,
+            round_num,
+            "result_review_round{}.md",
+            pass_skip_precondition=_result_phase3_precondition,
+        )
+        if skip_phase:
+            _log("결과보고서 Phase 3 — 이전 실행에서 PASS 인계, 건너뜀")
+            _log("결과보고서 루프 PASS — 결과보고서 확정 (Phase 1+2+3)")
+            return True
+
         _log(f"── Phase 3 라운드 {round_num}/{max_rounds} ──")
 
-        p3_extra = ""
-        if round_num > 1:
-            archive = OUTPUT_DIR / f"result_review_round{round_num - 1}.md"
-            archived_path = _archive_if_exists(review_path, archive)
-            if archived_path is not None:
-                _log(f"result_review.md → {archived_path.name}")
-            fail_summary = extract_fail_items(archived_path).strip() if archived_path is not None else ""
-            p3_extra = (
-                f"재작업 모드. {round_num}번째 시도. "
-                f"이전 고찰 검토에서 발견된 문제:\n{fail_summary}"
-            )
+        p3_extra = (
+            _format_rework_extra(round_num, "이전 고찰 검토에서 발견된 문제", fail_summary)
+            if fail_summary
+            else ""
+        )
 
         skip_gen = (start_step == "p3r") and round_num == 1
         if not skip_gen:

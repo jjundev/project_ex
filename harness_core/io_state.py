@@ -18,10 +18,15 @@ from .config import (
 
 def _has_exercise_section(report_path: Path) -> bool:
     """결과보고서에 '# 연습 문제' 섹션이 있는지 확인한다."""
+    return _has_heading_section(report_path, "연습 문제")
+
+
+def _has_heading_section(report_path: Path, title: str) -> bool:
+    """Markdown 보고서에 지정한 제목 섹션이 있는지 확인한다."""
     if not report_path.exists():
         return False
     body = report_path.read_text(encoding="utf-8", errors="ignore")
-    return re.search(r"(?m)^\s*#\s*연습 문제\b", body) is not None
+    return re.search(rf"(?m)^\s*#+\s*{re.escape(title)}\b", body) is not None
 
 
 def _exercise_files_present(exercise_dir: Path = EXERCISE_DIR) -> bool:
@@ -36,11 +41,21 @@ def _exercise_files_present(exercise_dir: Path = EXERCISE_DIR) -> bool:
 
 
 def _has_expected_values_section(report_path: Path) -> bool:
-    """예비보고서에 '## 예상 결과 값' 섹션이 있는지 확인한다."""
-    if not report_path.exists():
-        return False
-    body = report_path.read_text(encoding="utf-8", errors="ignore")
-    return re.search(r"(?m)^\s*##\s*예상 결과 값\b", body) is not None
+    """예비보고서에 '예상 결과 값' 섹션이 있는지 확인한다."""
+    return _has_heading_section(report_path, "예상 결과 값")
+
+
+def _has_pre_phase1_sections(report_path: Path) -> bool:
+    """예비보고서 Phase 1 핵심 섹션이 모두 있는지 확인한다."""
+    return all(
+        _has_heading_section(report_path, title)
+        for title in ("실험 목적", "실험 준비물", "실험 이론")
+    )
+
+
+def _has_result_data_section(report_path: Path) -> bool:
+    """결과보고서에 '# 실험 결과' 섹션이 있는지 확인한다."""
+    return _has_heading_section(report_path, "실험 결과")
 
 
 def detect_pre_report_state(output_dir: Path = OUTPUT_DIR) -> dict:
@@ -57,7 +72,9 @@ def detect_pre_report_state(output_dir: Path = OUTPUT_DIR) -> dict:
     if not pre_reports:
         return {"step": "p1g", "label": "처음부터 시작 (예비보고서 없음)", "error": None}
 
-    latest_pre = Path(sorted(pre_reports)[-1])
+    latest_pre = _latest_pre_report(output_dir=output_dir)
+    if latest_pre is None:
+        return {"step": "p1g", "label": "처음부터 시작 (예비보고서 없음)", "error": None}
 
     if _has_expected_values_section(latest_pre):
         # Phase 2 내용 이미 생성됨 → Phase 1 review 여부 무관, Phase 2 review 상태만 확인
@@ -230,20 +247,39 @@ def _find_result_reports(output_dir: Path = OUTPUT_DIR) -> list[str]:
     return [str(f) for f in _find_result_report_paths(output_dir=output_dir)]
 
 
+def _latest_path(paths: list[Path]) -> Path | None:
+    """경로 목록에서 수정 시간이 가장 최근인 파일을 반환한다."""
+    files = [p for p in paths if p.is_file()]
+    if not files:
+        return None
+    return max(files, key=lambda p: (p.stat().st_mtime_ns, p.name))
+
+
+def _latest_pre_report(output_dir: Path = OUTPUT_DIR) -> Path | None:
+    """가장 최근에 수정된 예비보고서 파일을 반환한다."""
+    if not output_dir.exists():
+        return None
+    return _latest_path([p for p in output_dir.glob("*예비보고서.md")])
+
+
 def _latest_result_report(output_dir: Path = OUTPUT_DIR) -> Path | None:
     """가장 최근에 수정된 결과보고서 파일을 반환한다."""
     paths = _find_result_report_paths(output_dir=output_dir)
-    if not paths:
-        return None
-    return max(paths, key=lambda p: (p.stat().st_mtime, p.name))
+    return _latest_path(paths)
+
+
+def _latest_review_file(active_review_path: Path, archive_glob: str) -> Path | None:
+    """active review와 archive 후보 중 가장 최근에 수정된 파일을 반환한다."""
+    candidates = []
+    if active_review_path.exists():
+        candidates.append(active_review_path)
+    candidates.extend(active_review_path.parent.glob(archive_glob))
+    return _latest_path(candidates)
 
 
 def _has_discussion_section(report_path: Path) -> bool:
     """결과보고서에 '# 고찰' 섹션이 있는지 확인한다."""
-    if not report_path.exists():
-        return False
-    body = report_path.read_text(encoding="utf-8", errors="ignore")
-    return re.search(r"(?m)^\s*#\s*고찰\b", body) is not None
+    return _has_heading_section(report_path, "고찰")
 
 
 def parse_review_verdict(review_path: Path) -> str:
