@@ -353,12 +353,13 @@ def _build_result_generator_phase2_prompt(extra: str = "") -> str:
 2. `input/exercise/` 자료를 모두 읽으세요. 이미지는 vision으로 직접 파싱하여 *문제 본문·조건·그림(Fig X.Y)* 을 추출하세요.
 3. system prompt의 **Step 4 (연습 문제 작성, Phase 2)** 지침을 따르세요.
    - Ch 그룹화 자동 추론 (파일명 무시, 문제 *내용*에서 추론)
-   - 헤더 구조: `# 연습 문제` → `## AC Ch X` (또는 `DC Ch X`) → `### Exercise N — 제목`
+   - 헤더 구조: `# 연습 문제` → `## AC Ch X` (또는 `DC Ch X`) → `### Exercise N` (제목·괄호 금지)
    - 풀이 단계는 ① ② ③ 원숫자 번호 사용
    - 단위 변환 (p-p ↔ rms 등) 명시
    - **Type 3 Calculated/Experimental Table의 Experimental 칸은 *항상* "실험 측정값" placeholder 유지** (측정값 파일에서 자동 매핑 금지)
 4. 위 "삽입 위치 규칙"대로 Edit insert / append 하세요.
 5. 저장 후 작업 완료를 보고하세요.
+6. 스타일 규칙: bold label·① step 다음 빈 줄 1개, `*italic*` 강조 금지, `✓`/`✗`/`❌`/`✅` 등 시각 기호 금지. 자세한 사항은 system prompt §4-4 8~11번 참조.
 
 ## 재작업 모드 (Phase 2 FAIL 후 재시도)
 

@@ -154,6 +154,13 @@ command: result-review
 **(j) Calculated/Experimental Table 형식**: Type 3 Exercise(회로 임피던스/전압 계산)에서 Table 헤더가 `구분 | Calculated | Experimental` 형식인가. Calculated 열만 풀이값으로 채워졌는가. **Experimental 칸은 *모두* "실험 측정값" placeholder를 유지해야 PASS**. agent가 측정값 파일에서 자동으로 가져온 값(실측 V_R, V_C 등) 또는 풀이값에서 역산한 값(Z_T, θ 등)이 Experimental 칸에 채워져 있으면 FAIL. 형식 불일치 또는 자동 채움 흔적 시 FAIL.
    - 이유: Exercise 조건(예: E_s = 4 V(p-p))이 실제 실험 조건(예: 강의노트 기준 E_s = 2 V(p-p))과 다를 수 있어 자동 매핑 시 잘못된 비교가 됨. Experimental 칸은 학생이 실험 후 수동 교체하는 영역.
 
+**(k) 스타일 규칙 준수**: 다음 4가지 모두 만족해야 PASS. 하나라도 위반 시 FAIL — 위반 위치(Exercise 번호 + 줄 인용) 명시.
+   - **헤더 단독**: `### Exercise N` 만 사용. `### Exercise N — 제목` / `### Exercise N (설명)` 같이 제목·괄호가 부착되어 있으면 FAIL.
+   - **빈 줄**: `**조건**`, `**풀이**`, `**정답**`, `**결론**` 등 bold label 줄과 `①`/`②`/`③` 원숫자 step 줄 *바로 다음*에 빈 줄이 있어야 한다. 빈 줄 없이 바로 `-` bullet 으로 이어붙였으면 FAIL.
+   - **italic 강조 금지**: `*text*` 형태 italic 사용 시 FAIL. bold(`**text**`)는 *케이스 분기 라벨* (예: `**Z_T > min**:`, `**Case A**:`, `**유형 1**:`) 에만 허용. 일반 강조용 bold 시 FAIL.
+   - **시각 기호 금지**: 본문에 `✓`/`✗`/`❌`/`✅`/`⭕`/`❎` 등 checkmark/cross 류가 등장하면 FAIL. 비교 결과는 부등식 또는 짧은 평서문으로 표기.
+   - 자세한 규칙은 result-report SKILL.md §4-4 8~11번 참조.
+
 **Q5 중간 산술 오류 정책 적용**: 풀이 중간 단계의 산술 표기에서 정확값과의 차이가 *최종 정답에서 동일한 자리수*에서 같으면 PASS + "미세 표기 불일치" 메모. 최종 정답이 다르면 FAIL.
 
 **입력 파싱 모호성 처리**: 이미지가 흐려서 일부 조건이 식별 불가하면 보고서에 "Exercise X — 이미지 식별 불가, 사용자 확인 권고" 명시가 있는지 확인. 명시되어 있고 파싱 가능한 부분만 작성된 경우 PASS(조건부) + 사용자 확인 권고. 명시 없이 임의로 풀었으면 FAIL.
@@ -177,6 +184,7 @@ command: result-review
 - 단위 표기: PASS 또는 FAIL (단위 누락 항목)
 - 정답-본문 일관성: PASS 또는 FAIL (불일치 Exercise)
 - Calculated/Experimental Table 형식 (해당 시): PASS 또는 FAIL (Experimental 자동 채움 흔적 시 FAIL — placeholder만 허용)
+- 스타일 규칙 (헤더 단독·빈 줄·italic·시각 기호): PASS 또는 FAIL (위반 위치)
 
 ### 발견된 오류 목록
 - [구체적 오류 항목, 없으면 "없음"]
@@ -281,3 +289,8 @@ command: result-review
 - 교재 자체에 column header와 절차문이 모순되거나 부동산하는 경우(예: column header가 "Calculated | Table 6.2"인데 절차문(l)은 Table 6.1 데이터 사용 명시), *절차문(physical 의미) 해석을 우선*하여 PASS(조건부)로 판정한다.
 - 발견된 오류 목록 또는 별도 라인에 "교재 모순 — {위치}: column header '{X}' vs 절차문 '{Y}', 절차문 해석 우선. 사용자 확인 권고"로 명시한다.
 - 교재 모순 발견 시 자동 FAIL을 주지 마라 — 절차문 해석으로 PASS(조건부) 판정하고 사용자에게 알리는 것이 원칙.
+
+**모드 B (k) 스타일-only FAIL 재작업 정책**:
+- 모드 B 검증에서 `(k) 스타일 규칙` 만 FAIL이고 `(a)~(j)` 가 모두 PASS인 경우, generator 재작업 지시는 `# 연습 문제` 섹션 *전체 재생성 금지* — 위반 줄만 Edit으로 수정하라고 명시한다.
+- 본질 검증 (Exercise 누락·입력 파싱·단위 변환·재계산·정답 일관성 등) 이 통과된 상태이므로 풀이 자체를 다시 만들면 round 비용 + LLM 호출이 낭비된다.
+- 발견된 오류 목록에 "(k)-only — Edit으로 위반 줄만 수정. 풀이 본문 재생성 금지" 를 명시한다.
