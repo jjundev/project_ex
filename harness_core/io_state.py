@@ -66,6 +66,13 @@ def detect_pre_report_state(output_dir: Path = OUTPUT_DIR) -> dict:
           - step: "p1g" | "p1r" | "p2g" | "p2r" | "done"
           - label: 한국어 설명
           - error: None (예비보고서는 차단 조건 없음)
+
+    Note:
+        Phase 1 review (pre_review_theory.md) verdict 가 Phase 2 섹션 존재
+        여부보다 우선한다 (theory FAIL/UNKNOWN 이면 보고서에 ``# 예상 결과 값``
+        섹션이 이미 있어도 p1g 로 복귀). CLI 에서 ``--start-step p2g/p2r`` 를
+        명시하면 pipeline 이 Phase 1 전체를 건너뛰므로 (pipeline.py
+        ``run_gan_loop`` 참조) 이 guard 는 GUI 자동 검출 경로에만 적용된다.
     """
     pre_reports = _find_pre_reports(output_dir=output_dir)
 
@@ -76,8 +83,25 @@ def detect_pre_report_state(output_dir: Path = OUTPUT_DIR) -> dict:
     if latest_pre is None:
         return {"step": "p1g", "label": "처음부터 시작 (예비보고서 없음)", "error": None}
 
+    # Phase 1 verdict 가 section 존재보다 강한 신호다 — 보고서에 # 예상 결과 값이
+    # 있어도 theory FAIL/UNKNOWN 이면 Phase 1 부터 재실행한다.
+    theory_review = output_dir / "pre_review_theory.md"
+    if theory_review.exists():
+        theory_verdict = parse_review_verdict(theory_review)
+        if theory_verdict == "FAIL":
+            if _has_expected_values_section(latest_pre):
+                return {
+                    "step": "p1g",
+                    "label": "Phase 1 재생성 필요 (이론 검토 FAIL — Phase 2 재작성 예정)",
+                    "error": None,
+                }
+            return {"step": "p1g", "label": "Phase 1 재생성 필요 (이론 검토 FAIL)", "error": None}
+        if theory_verdict == "UNKNOWN":
+            return {"step": "p1g", "label": "Phase 1 상태 불명확 → Phase 1부터 재시작", "error": None}
+        # theory_verdict == "PASS" → fall through
+
     if _has_expected_values_section(latest_pre):
-        # Phase 2 내용 이미 생성됨 → Phase 1 review 여부 무관, Phase 2 review 상태만 확인
+        # Phase 2 내용 이미 생성됨 → Phase 2 review 상태만 확인
         calc_review = output_dir / "pre_review.md"
         if not calc_review.exists():
             return {"step": "p2r", "label": "Phase 2 검토 시작 (예상 결과 값 생성 완료)", "error": None}
@@ -88,14 +112,9 @@ def detect_pre_report_state(output_dir: Path = OUTPUT_DIR) -> dict:
             return {"step": "done", "label": "예비보고서 완성됨", "error": None}
         return {"step": "p2g", "label": "Phase 2 상태 불명확 → Phase 2부터 재시작", "error": None}
 
-    # Phase 2 미생성 → Phase 1 review 상태 확인
-    theory_review = output_dir / "pre_review_theory.md"
+    # Phase 2 미생성 — theory_review 없으면 p1r, theory_review PASS 면 p2g
     if not theory_review.exists():
         return {"step": "p1r", "label": "Phase 1 검토 시작 (이론 섹션 생성 완료)", "error": None}
-
-    theory_verdict = parse_review_verdict(theory_review)
-    if theory_verdict == "FAIL":
-        return {"step": "p1g", "label": "Phase 1 재생성 필요 (이론 검토 FAIL)", "error": None}
 
     return {"step": "p2g", "label": "Phase 2 생성 시작 (예상 결과 값 미생성)", "error": None}
 

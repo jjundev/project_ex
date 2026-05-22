@@ -108,6 +108,55 @@ def test_detect_pre_report_state_theory_fail(tmp_path: Path) -> None:
     assert result["step"] == "p1g"
 
 
+def test_detect_pre_report_state_theory_fail_with_expected_values(tmp_path: Path) -> None:
+    """theory FAIL + # 예상 결과 값 섹션 존재 → p1g (Phase 2 재작성 예정 label)."""
+    (tmp_path / "13주차_예비보고서.md").write_text(
+        "# 예비보고서\n\n# 실험 목적\n...\n\n# 예상 결과 값\n...\n",
+        encoding="utf-8",
+    )
+    _make_fail_review(tmp_path / "pre_review_theory.md")
+    result = detect_pre_report_state(output_dir=tmp_path)
+    assert result["step"] == "p1g"
+    assert "Phase 2 재작성 예정" in result["label"]
+
+
+def test_detect_pre_report_state_theory_fail_with_calc_review_fail(tmp_path: Path) -> None:
+    """theory FAIL + 섹션 + calc_review FAIL → p1g (theory 우선)."""
+    (tmp_path / "13주차_예비보고서.md").write_text(
+        "# 예비보고서\n\n# 실험 목적\n...\n\n# 예상 결과 값\n...\n",
+        encoding="utf-8",
+    )
+    _make_fail_review(tmp_path / "pre_review_theory.md")
+    _make_fail_review(tmp_path / "pre_review.md")
+    result = detect_pre_report_state(output_dir=tmp_path)
+    assert result["step"] == "p1g"
+
+
+def test_detect_pre_report_state_theory_fail_with_calc_review_pass(tmp_path: Path) -> None:
+    """theory FAIL + 섹션 + calc_review PASS 여도 done 차단, p1g 로 복귀."""
+    (tmp_path / "13주차_예비보고서.md").write_text(
+        "# 예비보고서\n\n# 실험 목적\n...\n\n# 예상 결과 값\n...\n",
+        encoding="utf-8",
+    )
+    _make_fail_review(tmp_path / "pre_review_theory.md")
+    _make_pass_review(tmp_path / "pre_review.md")
+    result = detect_pre_report_state(output_dir=tmp_path)
+    assert result["step"] == "p1g"
+
+
+def test_detect_pre_report_state_theory_unknown(tmp_path: Path) -> None:
+    """theory_review 에 '최종 판정' 줄이 없으면 보수적으로 p1g."""
+    (tmp_path / "13주차_예비보고서.md").write_text(
+        "# 예비보고서\n\n# 실험 목적\n...\n\n# 예상 결과 값\n...\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "pre_review_theory.md").write_text(
+        "내용은 있지만 판정 줄 없음\n", encoding="utf-8"
+    )
+    result = detect_pre_report_state(output_dir=tmp_path)
+    assert result["step"] == "p1g"
+
+
 def test_detect_pre_report_state_theory_pass_no_expected_values(tmp_path: Path) -> None:
     (tmp_path / "15주차_예비보고서.md").write_text("# 예비보고서\n## 이론\n", encoding="utf-8")
     _make_pass_review(tmp_path / "pre_review_theory.md")
