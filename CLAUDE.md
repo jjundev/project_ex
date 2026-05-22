@@ -86,6 +86,28 @@ python harness.py --generator-model opus --reviewer-model gpt-5.5
 
 `--start-step` 인자는 활성 chain의 *첫* GAN loop에 적용된다 (예비/결과 모두 활성이면 결과 loop는 항상 p1g부터). `p3g`/`p3r`은 결과 loop 전용으로, 예비 loop가 첫 loop면 `HarnessError`로 거부된다.
 
+### 이전 실행 review 인계 (round 1 동작)
+
+각 phase의 round 1 시작 시, `output/`에 있는 active review 파일(`pre_review_theory.md`, `pre_review.md`, `result_review_data.md`, `result_review_exercise.md`, `result_review.md`)과 matching archive(`*_round*.md`) 중 가장 최근 수정된 review를 확인한다:
+
+| 이전 review 상태 | round 1 동작 |
+|---|---|
+| active/archive 파일 없음 | fresh start (기존 동작) |
+| `최종 판정: PASS` + 보고서 해당 섹션 존재 | **phase 전체 skip** (이전 실행 결과 인계) |
+| `최종 판정: PASS` 이지만 보고서 섹션 누락 (상위 phase 재실행 등으로 stale) | active review면 `_round0.md`로 archive, archive review면 그대로 둔 뒤 fresh start |
+| `최종 판정: FAIL` / UNKNOWN | active review면 `_round0.md`로 archive, archive review면 그대로 둔 뒤 본문을 FAIL summary로 generator에 인계 |
+
+PASS-skip 조건의 "보고서 섹션":
+- 예비 Phase 1 → 예비보고서에 `# 실험 목적`, `# 실험 준비물`, `# 실험 이론` 섹션 존재
+- 예비 Phase 2 → 예비보고서에 `# 예상 결과 값` 섹션 존재
+- 결과 Phase 1 → 결과보고서에 `# 실험 결과` 섹션 존재
+- 결과 Phase 2 → 결과보고서에 `# 연습 문제` 섹션 존재
+- 결과 Phase 3 → 결과보고서에 `# 고찰` 섹션 존재
+
+이 guard는 섹션 존재 여부만 확인한다. review와 보고서 본문 내용의 완전한 대응성까지 증명하지는 않는다.
+
+진짜 fresh start가 필요한 경우 해당 phase의 active review와 matching archive(`*_round*.md`)를 모두 수동으로 삭제하면 된다.
+
 ## 디렉토리 구조
 - `docx/` : 보고서 템플릿
   - `template_pre_report.md` : 예비보고서 마크다운 템플릿

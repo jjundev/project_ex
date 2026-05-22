@@ -11,6 +11,7 @@ from .io_state import (
     _has_discussion_section,
     _has_exercise_section,
     _latest_result_report,
+    _latest_review_file,
     collect_docx_files,
     extract_pass_sections,
     parse_review_verdict,
@@ -28,12 +29,14 @@ def _build_pre_generator_prompt(extra: str = "") -> str:
     if extra:
         rework_section = f"\n## 재작업 지시사항\n{extra}\n"
 
-        pre_reports = _find_pre_reports()
+        pre_reports = _find_pre_reports(output_dir=OUTPUT_DIR)
         pre_list = "\n".join(f"  - {f}" for f in pre_reports) or "  (없음)"
 
-        archives = sorted(OUTPUT_DIR.glob("pre_review_theory_round*.md"))
-        latest_review = archives[-1] if archives else (OUTPUT_DIR / "pre_review_theory.md")
-        pass_sections = extract_pass_sections(latest_review)
+        latest_review = _latest_review_file(
+            OUTPUT_DIR / "pre_review_theory.md",
+            "pre_review_theory_round*.md",
+        )
+        pass_sections = extract_pass_sections(latest_review) if latest_review else []
         pass_list = "\n".join(f"  - {s}" for s in pass_sections) or "  (없음)"
 
         retry_section = f"""
