@@ -197,6 +197,49 @@ def _para(text: str) -> dict:
 
 _EMPTY_BLOCK = {"object": "block", "type": "paragraph", "paragraph": {"rich_text": []}}
 _HTML_COMMENT_RE = re.compile(r"^\s*<!--.*-->\s*$")
+_NOTION_CODE_LANGUAGES = {
+    "abap", "abc", "agda", "arduino", "ascii art", "assembly", "bash",
+    "basic", "bnf", "c", "c#", "c++", "clojure", "coffeescript", "coq",
+    "css", "dart", "dhall", "diff", "docker", "ebnf", "elixir", "elm",
+    "erlang", "f#", "flow", "fortran", "gherkin", "glsl", "go", "graphql",
+    "groovy", "haskell", "hcl", "html", "idris", "java", "javascript",
+    "json", "julia", "kotlin", "latex", "less", "lisp", "livescript",
+    "llvm ir", "lua", "makefile", "markdown", "markup", "matlab",
+    "mathematica", "mermaid", "nix", "notion formula", "objective-c",
+    "ocaml", "pascal", "perl", "php", "plain text", "powershell",
+    "prolog", "protobuf", "purescript", "python", "r", "racket",
+    "reason", "ruby", "rust", "sass", "scala", "scheme", "scss",
+    "shell", "smalltalk", "solidity", "sql", "swift", "toml",
+    "typescript", "vb.net", "verilog", "vhdl", "visual basic",
+    "webassembly", "xml", "yaml", "java/c/c++/c#",
+}
+_CODE_LANGUAGE_ALIASES = {
+    "text": "plain text",
+    "txt": "plain text",
+    "plaintext": "plain text",
+    "plain": "plain text",
+    "md": "markdown",
+    "js": "javascript",
+    "jsx": "javascript",
+    "ts": "typescript",
+    "tsx": "typescript",
+    "py": "python",
+    "ps1": "powershell",
+    "sh": "shell",
+    "zsh": "shell",
+    "yml": "yaml",
+    "htm": "html",
+    "dockerfile": "docker",
+    "make": "makefile",
+    "mk": "makefile",
+    "rb": "ruby",
+    "rs": "rust",
+    "csharp": "c#",
+    "cpp": "c++",
+    "cxx": "c++",
+    "objectivec": "objective-c",
+    "objc": "objective-c",
+}
 
 
 def _last_block_type(blocks: list[dict]) -> str | None:
@@ -206,6 +249,28 @@ def _last_block_type(blocks: list[dict]) -> str | None:
 
 def _is_empty_block(block: dict) -> bool:
     return block.get("type") == "paragraph" and not block.get("paragraph", {}).get("rich_text")
+
+
+def _normalize_code_language(raw: str) -> str:
+    """Markdown fence info string을 Notion code.language enum으로 정규화한다."""
+    info = raw.strip().lower()
+    if not info:
+        return "plain text"
+
+    if info in _NOTION_CODE_LANGUAGES:
+        return info
+
+    attr_match = re.match(r"^\{\s*\.([a-z0-9_+#./-]+)", info)
+    if attr_match:
+        lang = attr_match.group(1)
+    else:
+        lang = info.split(None, 1)[0]
+
+    lang = lang.strip().strip("{}").removeprefix(".")
+    normalized = _CODE_LANGUAGE_ALIASES.get(lang, lang)
+    if normalized in _NOTION_CODE_LANGUAGES:
+        return normalized
+    return "plain text"
 
 
 def _raw_heading_level(stripped: str) -> int | None:
@@ -252,7 +317,7 @@ def parse_markdown(text: str) -> list[dict]:
 
         # ── 코드 블록 ───────────────────────────────────────────────────────
         if stripped.startswith("```"):
-            code_lang = stripped[3:].strip()
+            code_lang = _normalize_code_language(stripped[3:].strip())
             code_buf: list[str] = []
             i += 1
             while i < n and lines[i].rstrip() != "```":
@@ -262,7 +327,7 @@ def parse_markdown(text: str) -> list[dict]:
                 "object": "block",
                 "type": "code",
                 "code": {
-                    "language": code_lang or "plain text",
+                    "language": code_lang,
                     "rich_text": [{"type": "text", "text": {"content": "\n".join(code_buf)}}],
                 },
             })
@@ -443,6 +508,10 @@ def deploy(file: Path, parent_url: str, token: str) -> None:
         except requests.HTTPError as e:
             print(
                 f"✗ 블록 업로드 실패 ({e.response.status_code}): {e.response.text}",
+                file=sys.stderr,
+            )
+            print(
+                f"[deploy] 실패 chunk 시작 index: {uploaded}, chunk 크기: {len(chunk)}",
                 file=sys.stderr,
             )
             sys.exit(1)
