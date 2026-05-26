@@ -80,7 +80,7 @@ python harness.py --generator-model opus --reviewer-model gpt-5.5
 | 결과 Phase 1 생성 | `result-generator` | `# 실험 결과` 섹션 작성 | generator |
 | 결과 Phase 1 검토 | `result-reviewer` | %(Difference) 수치 + Table 구조 검증 → `result_review_data.md` | reviewer |
 | 결과 Phase 2 생성 | `result-generator` | `# 연습 문제` 섹션 추가 (`input/exercise/` 있을 때만; 없으면 phase 전체 skip) | generator |
-| 결과 Phase 2 검토 | `result-reviewer` | 연습 문제 10개 항목 검증 + 섹션 위치 검증 → `result_review_exercise.md` | reviewer |
+| 결과 Phase 2 검토 | `result-reviewer` | 연습 문제 11개 항목 검증 + 섹션 위치 검증 → `result_review_exercise.md` | reviewer |
 | 결과 Phase 3 생성 | `result-generator` | `# 고찰` 섹션 추가 | generator |
 | 결과 Phase 3 검토 | `result-reviewer` | 고찰 품질 검토 → `result_review.md` | reviewer |
 

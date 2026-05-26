@@ -276,7 +276,7 @@ def test_result_generator_phase2_prompt_exercise_only() -> None:
 
 
 def test_result_reviewer_phase2_prompt_exercise_only(tmp_path: Path) -> None:
-    """Phase 2 reviewer는 # 연습 문제 10-항목 검증 + 섹션 위치."""
+    """Phase 2 reviewer는 # 연습 문제 11-항목 검증 + 섹션 위치."""
     prompt = prompts._build_result_reviewer_phase2_prompt(output_dir=tmp_path)
 
     assert "`# 연습 문제` 섹션" in prompt
