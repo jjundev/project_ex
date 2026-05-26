@@ -11,7 +11,7 @@ command: result-review
 
 하네스가 전달하는 지시에 따라 세 가지 모드로 검증합니다:
 - **모드 A (Phase 1)**: `# 실험 결과` 섹션 수치/구조 검증 → `result_review_data.md`
-- **모드 B (Phase 2)**: `# 연습 문제` 섹션 검증 (10-항목 + 섹션 위치) → `result_review_exercise.md`. `input/exercise/` 비면 하네스가 호출하지 않음.
+- **모드 B (Phase 2)**: `# 연습 문제` 섹션 검증 (11-항목 + 섹션 위치) → `result_review_exercise.md`. `input/exercise/` 비면 하네스가 호출하지 않음.
 - **모드 C (Phase 3)**: `# 고찰` 섹션 품질 검토 → `result_review.md`
 
 ---
@@ -144,7 +144,7 @@ command: result-review
 - `input/exercise/` 자료가 있는데 보고서에 `# 연습 문제` 섹션이 *없으면* FAIL (Exercise 누락).
 - `input/exercise/` 자료가 *없는데* 보고서에 `# 연습 문제` 섹션이 있으면 FAIL (환각 섹션).
 
-### Step 2: 섹션 위치 + 10개 항목 검증
+### Step 2: 섹션 위치 + 11개 항목 검증
 
 `# 연습 문제` 섹션이 있는 경우 다음을 모두 검증한다:
 
@@ -169,12 +169,13 @@ command: result-review
 **(j) Calculated/Experimental Table 형식**: Type 3 Exercise(회로 임피던스/전압 계산)에서 Table 헤더가 `구분 | Calculated | Experimental` 형식인가. Calculated 열만 풀이값으로 채워졌는가. **Experimental 칸은 *모두* "실험 측정값" placeholder를 유지해야 PASS**. agent가 측정값 파일에서 자동으로 가져온 값(실측 V_R, V_C 등) 또는 풀이값에서 역산한 값(Z_T, θ 등)이 Experimental 칸에 채워져 있으면 FAIL. 형식 불일치 또는 자동 채움 흔적 시 FAIL.
    - 이유: Exercise 조건(예: E_s = 4 V(p-p))이 실제 실험 조건(예: 강의노트 기준 E_s = 2 V(p-p))과 다를 수 있어 자동 매핑 시 잘못된 비교가 됨. Experimental 칸은 학생이 실험 후 수동 교체하는 영역.
 
-**(k) 스타일 규칙 준수**: 다음 4가지 모두 만족해야 PASS. 하나라도 위반 시 FAIL — 위반 위치(Exercise 번호 + 줄 인용) 명시.
+**(k) 스타일 규칙 준수**: 다음 5가지 모두 만족해야 PASS. 하나라도 위반 시 FAIL — 위반 위치(Exercise 번호 + 줄 인용) 명시.
    - **헤더 단독**: `### Exercise N` 만 사용. `### Exercise N — 제목` / `### Exercise N (설명)` 같이 제목·괄호가 부착되어 있으면 FAIL.
    - **빈 줄**: `**조건**`, `**풀이**`, `**정답**`, `**결론**` 등 bold label 줄과 `①`/`②`/`③` 원숫자 step 줄 *바로 다음*에 빈 줄이 있어야 한다. 빈 줄 없이 바로 `-` bullet 으로 이어붙였으면 FAIL.
+   - **결론/요약 bullet 서식**: `**결론**`, `**판정**`, `**정답**` 아래에 표가 아닌 문장형 결론·요약·단일 정답이 있으면 각 독립 문단이 top-level bullet `-` 로 시작해야 PASS. 일반 문단으로 쓰였으면 FAIL. 단, `**정답**` 바로 아래 Markdown 표가 오는 Type 3 Exercise는 이 규칙의 예외로 PASS.
    - **italic 강조 금지**: `*text*` 형태 italic 사용 시 FAIL. bold(`**text**`)는 *케이스 분기 라벨* (예: `**Z_T > min**:`, `**Case A**:`, `**유형 1**:`) 에만 허용. 일반 강조용 bold 시 FAIL.
    - **시각 기호 금지**: 본문에 `✓`/`✗`/`❌`/`✅`/`⭕`/`❎` 등 checkmark/cross 류가 등장하면 FAIL. 비교 결과는 부등식 또는 짧은 평서문으로 표기.
-   - 자세한 규칙은 result-report SKILL.md §4-4 8~11번 참조.
+   - 자세한 규칙은 result-report SKILL.md §4-4 8~12번 참조.
 
 **Q5 중간 산술 오류 정책 적용**: 풀이 중간 단계의 산술 표기에서 정확값과의 차이가 *최종 정답에서 동일한 자리수*에서 같으면 PASS + "미세 표기 불일치" 메모. 최종 정답이 다르면 FAIL.
 
@@ -199,7 +200,7 @@ command: result-review
 - 단위 표기: PASS 또는 FAIL (단위 누락 항목)
 - 정답-본문 일관성: PASS 또는 FAIL (불일치 Exercise)
 - Calculated/Experimental Table 형식 (해당 시): PASS 또는 FAIL (Experimental 자동 채움 흔적 시 FAIL — placeholder만 허용)
-- 스타일 규칙 (헤더 단독·빈 줄·italic·시각 기호): PASS 또는 FAIL (위반 위치)
+- 스타일 규칙 (헤더 단독·빈 줄·결론/요약 bullet·italic·시각 기호): PASS 또는 FAIL (위반 위치)
 
 ### 발견된 오류 목록
 - [구체적 오류 항목, 없으면 "없음"]
@@ -234,6 +235,7 @@ command: result-review
 - 분석 기법별로 그룹화하여 서술되었는지 확인한다.
 - 수치적 특이사항(오차 증폭, 음수 전류 방향 해석 등)이 설명되었는지 확인한다.
 - 측정 기반 결과와 이론 기준값의 차이를 단순 계산 오류로 처리하지 않고, 보간값·판독값·이론 기준값을 구분해 설명하는지 확인한다.
+- **고찰 서식**: `# 고찰` 아래 `## 결과 분석`, `## 오차 원인`, `## 개선 방안`, `## 결론`의 본문 문단은 모두 top-level bullet `-` 로 시작해야 한다. 일반 문단으로 쓰였거나 nested bullet/numbered list/table을 사용했으면 스타일 FAIL. 내용은 평가하지 말고 서식 위반 위치만 인용한다.
 
 ### Step 3: 오차 원인 검토
 
@@ -258,6 +260,9 @@ command: result-review
 
 ```
 ## 고찰 검토 결과
+
+### 고찰 서식
+- 판정: PASS 또는 FAIL (각 본문 문단이 top-level bullet `-` 형식인지)
 
 ### 결과 분석
 - 판정: PASS 또는 FAIL (이유)
