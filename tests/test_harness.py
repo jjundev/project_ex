@@ -273,6 +273,8 @@ def test_result_generator_phase2_prompt_exercise_only() -> None:
     assert "`# 고찰` 헤더가 있으면" in prompt
     assert "파일 *맨 끝*에" in prompt
     assert "실험 측정값" in prompt  # Type 3 Calculated/Experimental placeholder
+    assert "임의 hard-wrap 금지" in prompt
+    assert "연속 bullet 사이에는 빈 줄 없음" in prompt
 
 
 def test_result_reviewer_phase2_prompt_exercise_only(tmp_path: Path) -> None:
@@ -292,6 +294,7 @@ def test_result_reviewer_phase2_prompt_exercise_only(tmp_path: Path) -> None:
     assert "Calculated/Experimental Table 형식" in prompt
     assert "실험 측정값" in prompt
     assert "자동 채움" in prompt
+    assert "블록 줄바꿈" in prompt
     assert "result_review_exercise.md" in prompt
 
 
@@ -304,6 +307,8 @@ def test_result_generator_phase3_prompt_protects_phase1_and_phase2() -> None:
     assert "끼워 넣지 마세요" in prompt
     assert "측정 기반 산출값과 이론 기준값이 다르면 단순 계산 오류로 단정하지 말고" in prompt
     assert "보간값·판독값·이론 기준값을 구분" in prompt
+    assert "연속 bullet 문단 사이에는 빈 줄을 넣지" in prompt
+    assert "임의 hard-wrap 하지 않음" in prompt
 
 
 def test_result_reviewer_phase3_prompt_checks_measured_vs_theory_discussion(tmp_path: Path) -> None:
@@ -313,6 +318,8 @@ def test_result_reviewer_phase3_prompt_checks_measured_vs_theory_discussion(tmp_
     prompt = prompts._build_result_reviewer_phase3_prompt(output_dir=tmp_path)
 
     assert "측정값-이론값 구분" in prompt
+    assert "연속 bullet 문단 사이에는 빈 줄이 없어야" in prompt
+    assert "임의 hard-wrap" in prompt
     assert "측정 기반 산출값과 이론 기준값의 차이를 단순 오류로 처리하지 않고" in prompt
     assert "소자 오차, 계측 한계, 그래프 판독 오차" in prompt
 
