@@ -171,7 +171,7 @@ command: result-review
 
 **(k) 스타일 규칙 준수**: 다음 5가지 모두 만족해야 PASS. 하나라도 위반 시 FAIL — 위반 위치(Exercise 번호 + 줄 인용) 명시.
    - **헤더 단독**: `### Exercise N` 만 사용. `### Exercise N — 제목` / `### Exercise N (설명)` 같이 제목·괄호가 부착되어 있으면 FAIL.
-   - **빈 줄**: `**조건**`, `**풀이**`, `**정답**`, `**결론**` 등 bold label 줄과 `①`/`②`/`③` 원숫자 step 줄 *바로 다음*에 빈 줄이 있어야 한다. 빈 줄 없이 바로 `-` bullet 으로 이어붙였으면 FAIL.
+   - **블록 줄바꿈**: `#`/`##`/`###` 헤더, `**조건**`/`**풀이**`/`**정답**`/`**결론**`/`**판정**`/`**분석**` bold label, `①`/`②`/`③` 원숫자 step, HTML schema 주석, Markdown table 앞뒤에는 빈 줄이 정확히 하나 있어야 한다. 같은 목록의 연속 bullet 사이에 빈 줄이 있거나, 긴 bullet/문장/표 행이 임의 hard-wrap 되어 한 논리 문장이 여러 줄로 쪼개졌으면 FAIL.
    - **결론/요약 bullet 서식**: `**결론**`, `**판정**`, `**정답**` 아래에 표가 아닌 문장형 결론·요약·단일 정답이 있으면 각 독립 문단이 top-level bullet `-` 로 시작해야 PASS. 일반 문단으로 쓰였으면 FAIL. 단, `**정답**` 바로 아래 Markdown 표가 오는 Type 3 Exercise는 이 규칙의 예외로 PASS.
    - **italic 강조 금지**: `*text*` 형태 italic 사용 시 FAIL. bold(`**text**`)는 *케이스 분기 라벨* (예: `**Z_T > min**:`, `**Case A**:`, `**유형 1**:`) 에만 허용. 일반 강조용 bold 시 FAIL.
    - **시각 기호 금지**: 본문에 `✓`/`✗`/`❌`/`✅`/`⭕`/`❎` 등 checkmark/cross 류가 등장하면 FAIL. 비교 결과는 부등식 또는 짧은 평서문으로 표기.
@@ -200,7 +200,7 @@ command: result-review
 - 단위 표기: PASS 또는 FAIL (단위 누락 항목)
 - 정답-본문 일관성: PASS 또는 FAIL (불일치 Exercise)
 - Calculated/Experimental Table 형식 (해당 시): PASS 또는 FAIL (Experimental 자동 채움 흔적 시 FAIL — placeholder만 허용)
-- 스타일 규칙 (헤더 단독·빈 줄·결론/요약 bullet·italic·시각 기호): PASS 또는 FAIL (위반 위치)
+- 스타일 규칙 (헤더 단독·블록 줄바꿈·결론/요약 bullet·italic·시각 기호): PASS 또는 FAIL (위반 위치)
 
 ### 발견된 오류 목록
 - [구체적 오류 항목, 없으면 "없음"]
@@ -235,7 +235,7 @@ command: result-review
 - 분석 기법별로 그룹화하여 서술되었는지 확인한다.
 - 수치적 특이사항(오차 증폭, 음수 전류 방향 해석 등)이 설명되었는지 확인한다.
 - 측정 기반 결과와 이론 기준값의 차이를 단순 계산 오류로 처리하지 않고, 보간값·판독값·이론 기준값을 구분해 설명하는지 확인한다.
-- **고찰 서식**: `# 고찰` 아래 `## 결과 분석`, `## 오차 원인`, `## 개선 방안`, `## 결론`의 본문 문단은 모두 top-level bullet `-` 로 시작해야 한다. 일반 문단으로 쓰였거나 nested bullet/numbered list/table을 사용했으면 스타일 FAIL. 내용은 평가하지 말고 서식 위반 위치만 인용한다.
+- **고찰 서식**: `# 고찰` 아래 `## 결과 분석`, `## 오차 원인`, `## 개선 방안`, `## 결론`의 본문 문단은 모두 top-level bullet `-` 로 시작해야 한다. 각 소섹션 헤더와 첫 bullet 사이에는 빈 줄이 정확히 하나 있어야 하고, 연속 bullet 문단 사이에는 빈 줄이 없어야 한다. 일반 문단, 임의 hard-wrap, nested bullet/numbered list/table을 사용했으면 스타일 FAIL. 내용은 평가하지 말고 서식 위반 위치만 인용한다.
 
 ### Step 3: 오차 원인 검토
 

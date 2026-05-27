@@ -359,7 +359,7 @@ def _build_result_generator_phase2_prompt(extra: str = "") -> str:
    - **Type 3 Calculated/Experimental Table의 Experimental 칸은 *항상* "실험 측정값" placeholder 유지** (측정값 파일에서 자동 매핑 금지)
 4. 위 "삽입 위치 규칙"대로 Edit insert / append 하세요.
 5. 저장 후 작업 완료를 보고하세요.
-6. 스타일 규칙: bold label·① step 다음 빈 줄 1개, `**결론**`/`**판정**`/문장형 `**정답**` 아래 문단은 top-level bullet `-` 사용, `*italic*` 강조 금지, `✓`/`✗`/`❌`/`✅` 등 시각 기호 금지. 자세한 사항은 system prompt §4-4 8~12번 참조.
+6. 스타일 규칙: 헤더·bold label·① step·HTML 주석·표 앞뒤는 빈 줄 1개, 같은 목록의 연속 bullet 사이에는 빈 줄 없음, 긴 문장/수식/표 행은 임의 hard-wrap 금지, `**결론**`/`**판정**`/문장형 `**정답**` 아래 문단은 top-level bullet `-` 사용, `*italic*` 강조 금지, `✓`/`✗`/`❌`/`✅` 등 시각 기호 금지. 자세한 사항은 system prompt §4-4 8~12번 참조.
 
 ## 재작업 모드 (Phase 2 FAIL 후 재시도)
 
@@ -394,6 +394,7 @@ def _build_result_generator_phase3_prompt(extra: str = "") -> str:
    - 정량적 오차 원인 분석 필수
    - 측정 기반 산출값과 이론 기준값이 다르면 단순 계산 오류로 단정하지 말고, 보간값·판독값·이론 기준값을 구분해 차이를 정량적으로 설명
    - 각 소섹션의 본문은 일반 문단이 아니라 top-level bullet `-` 로 시작하는 긴 bullet 문단 형식으로 작성
+   - 각 `##` 소섹션 헤더 뒤에는 빈 줄 하나를 둔 뒤 bullet 문단을 시작하고, 연속 bullet 문단 사이에는 빈 줄을 넣지 않으며, 긴 bullet 문단은 임의 hard-wrap 하지 않음
 3. 기존 결과보고서 파일을 **수정**하여 `# 고찰` 섹션을 반영하세요.
    - 파일에 `# 고찰` 섹션이 **이미 있으면 교체**하고, 없으면 파일 끝에 **추가**하세요.
    - 위치 규칙: `# 연습 문제` 섹션이 있으면 그 *뒤*에, 없으면 `# 실험 결과` *뒤*에 `# 고찰`이 옵니다. 절대 `# 실험 결과`와 `# 연습 문제` 사이에 끼워 넣지 마세요.
@@ -527,7 +528,7 @@ def _build_result_reviewer_phase2_prompt(
 - **(h) 단위 표기**: 모든 수치에 단위(V/mA/Ω/μF/Hz/° 등)가 표기되었는가.
 - **(i) 정답-본문 일관성**: "정답" 섹션의 값이 본문 마지막 단계 결과와 일치하는가.
 - **(j) Calculated/Experimental Table 형식** (Type 3 Exercise 한정): 헤더가 `구분 | Calculated | Experimental` 형식인가. Calculated 열만 풀이값으로 채워졌고, **Experimental 칸은 *모두* "실험 측정값" placeholder를 유지하는가** (자동 채움 흔적이 있으면 FAIL).
-- **(k) 스타일 규칙**: 헤더 단독, label/step 다음 빈 줄, 결론/요약 bullet, italic 금지, 시각 기호 금지를 모두 만족하는가.
+- **(k) 스타일 규칙**: 헤더 단독, 블록 줄바꿈, 결론/요약 bullet, italic 금지, 시각 기호 금지를 모두 만족하는가.
 
 Q5 중간 산술 오류 정책 (system prompt 참조): 중간 표기와 정확값이 *최종 정답에서 동일 자리수*에서 같으면 PASS + "미세 표기 불일치" 메모. 최종 정답이 다르면 FAIL.
 
@@ -549,7 +550,7 @@ Q5 중간 산술 오류 정책 (system prompt 참조): 중간 표기와 정확�
 - 단위 표기: PASS 또는 FAIL (단위 누락 항목)
 - 정답-본문 일관성: PASS 또는 FAIL (불일치 Exercise)
 - Calculated/Experimental Table 형식 (해당 시): PASS 또는 FAIL (Experimental 자동 채움 흔적 시 FAIL — placeholder만 허용)
-- 스타일 규칙 (헤더 단독·빈 줄·결론/요약 bullet·italic·시각 기호): PASS 또는 FAIL (위반 위치)
+- 스타일 규칙 (헤더 단독·블록 줄바꿈·결론/요약 bullet·italic·시각 기호): PASS 또는 FAIL (위반 위치)
 
 ### 발견된 오류 목록
 - [구체적 오류 항목, 없으면 "없음"]
@@ -590,7 +591,7 @@ def _build_result_reviewer_phase3_prompt(
 3. **오차 원인**: 각 원인에 정량적 근거(공칭값 vs 실측값 등)가 포함되었는지 확인. 측정 기반 결과와 이론 기준값이 다르면 소자 오차, 계측 한계, 그래프 판독 오차 등 데이터에 근거한 가능한 원인을 제시했는지 확인
 4. **개선 방안**: 오차 원인과 1:1 대응하는 구체적 방법이 서술되었는지 확인
 5. **결론**: 오차율 범위의 정량적 요약, 실험 목적 달성 여부가 포함되었는지 확인
-6. **형식**: `# 고찰` 아래 각 소섹션 본문 문단이 top-level bullet `-` 로 시작하는지 확인. 일반 문단, nested bullet, numbered list, table 사용 시 FAIL
+6. **형식**: `# 고찰` 아래 각 소섹션 본문 문단이 top-level bullet `-` 로 시작하는지 확인. 각 소섹션 헤더와 첫 bullet 사이에는 빈 줄이 정확히 하나 있어야 하고, 연속 bullet 문단 사이에는 빈 줄이 없어야 하며, 긴 bullet 문단은 임의 hard-wrap 되면 안 됨. 일반 문단, nested bullet, numbered list, table 사용 시 FAIL
 
 ## 출력 형식
 
