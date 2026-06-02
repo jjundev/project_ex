@@ -35,6 +35,7 @@ from .io_state import (
     _latest_review_file,
     collect_docx_files,
     extract_fail_items,
+    normalize_result_section_order,
     parse_review_verdict,
 )
 from .prompts import (
@@ -400,6 +401,18 @@ def _consume_previous_review(
     return (fail_summary, False)
 
 
+def _normalize_result_order_or_log() -> None:
+    """결과보고서 섹션 순서를 정규화하고, 재배치가 일어나면 로그를 남긴다.
+
+    generator가 `# 고찰`을 `# 실험 결과`와 `# 연습 문제` 사이 등 잘못된 위치에
+    삽입해도 reviewer가 보기 전에 [실험 결과 → 연습 문제 → 고찰] 순서로 바로잡는다.
+    skip_gen 여부와 무관하게 각 reviewer 호출 직전에 무조건 실행한다.
+    """
+    report = _latest_result_report(output_dir=OUTPUT_DIR)
+    if report is not None and normalize_result_section_order(report):
+        _log("섹션 순서 정규화: [실험 결과 → 연습 문제 → 고찰] 로 재배치")
+
+
 def _format_rework_extra(round_num: int, label: str, fail_summary: str) -> str:
     """rework 모드용 generator/reviewer extra 문자열을 만든다."""
     if round_num == 1:
@@ -622,6 +635,7 @@ async def run_result_loop(max_rounds: int = 3, start_step: str = "p1g") -> bool:
             skip_gen = (start_step == "p2r") and round_num == 1
             if not skip_gen:
                 await run_role("result-generator", prompt_override=_build_result_generator_phase2_prompt(p2_extra))
+            _normalize_result_order_or_log()
             await run_role("result-reviewer", prompt_override=_build_result_reviewer_phase2_prompt(p2_extra))
 
             verdict = parse_review_verdict(review_exercise_path)
@@ -668,6 +682,7 @@ async def run_result_loop(max_rounds: int = 3, start_step: str = "p1g") -> bool:
         skip_gen = (start_step == "p3r") and round_num == 1
         if not skip_gen:
             await run_role("result-generator", prompt_override=_build_result_generator_phase3_prompt(p3_extra))
+        _normalize_result_order_or_log()
         await run_role("result-reviewer", prompt_override=_build_result_reviewer_phase3_prompt(p3_extra))
 
         verdict = parse_review_verdict(review_path)
