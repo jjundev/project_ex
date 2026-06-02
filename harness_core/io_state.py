@@ -12,6 +12,7 @@ from .config import (
     NOTE_DIR,
     OUTPUT_DIR,
     REPORT_SECTIONS,
+    RESULT_SECTION_ORDER,
     STT_DIR,
 )
 
@@ -299,6 +300,91 @@ def _latest_review_file(active_review_path: Path, archive_glob: str) -> Path | N
 def _has_discussion_section(report_path: Path) -> bool:
     """결과보고서에 '# 고찰' 섹션이 있는지 확인한다."""
     return _has_heading_section(report_path, "고찰")
+
+
+def normalize_result_section_order(report_path: Path) -> bool:
+    """결과보고서의 top-level(`# `) 섹션을 정규 순서로 재배치한다.
+
+    정규 순서는 config.RESULT_SECTION_ORDER (실험 결과 → 연습 문제 → 고찰)다.
+    제목·preamble(첫 알려진 섹션 이전 내용)은 맨 앞에 고정하고, *알려진 섹션끼리만*
+    정규 순서로 재배치한다. 미지의 top-level 섹션(예: `# 참고문헌`)은 원래 위치를
+    유지한다. ``` 코드펜스 안의 `#` 줄은 헤더로 보지 않는다.
+
+    섹션 *내부* 내용은 바꾸지 않으며, 재배치가 실제로 일어날 때만 섹션 경계를
+    빈 줄 하나로 정규화하고 파일을 덮어쓴다. 로그는 호출부(pipeline)가 반환값을
+    보고 남긴다 (이 모듈에는 로깅 시설이 없다).
+
+    Returns:
+        재배치가 일어나 파일을 새로 쓴 경우 True, 변경이 없으면 False.
+        (멱등 — 이미 정규 순서면 항상 False)
+    """
+    if not report_path.exists():
+        return False
+
+    rank = {name: i for i, name in enumerate(RESULT_SECTION_ORDER)}
+    text = report_path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+
+    # top-level `# ` 헤더 위치 탐지 (``` 코드펜스 안은 무시)
+    header_indices: list[int] = []
+    in_fence = False
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if line.startswith("# "):
+            header_indices.append(i)
+
+    if not header_indices:
+        return False
+
+    # 블록 분할: preamble(첫 헤더 이전) + 각 top-level 섹션
+    preamble = lines[: header_indices[0]]
+    blocks: list[tuple[str, list[str]]] = []
+    for k, idx in enumerate(header_indices):
+        end = header_indices[k + 1] if k + 1 < len(header_indices) else len(lines)
+        title = lines[idx][2:].strip()
+        blocks.append((title, lines[idx:end]))
+
+    # 첫 알려진 섹션 위치 — 그 이전(제목 등)은 head로 고정
+    first_known = next((k for k, (t, _) in enumerate(blocks) if t in rank), None)
+    if first_known is None:
+        return False
+
+    head = blocks[:first_known]
+    tail = blocks[first_known:]
+
+    # tail 안 알려진 섹션 슬롯에 정규 순서로 재배치 (미지 섹션은 제자리 유지)
+    known_slots = [k for k, (t, _) in enumerate(tail) if t in rank]
+    known_sorted = sorted((tail[k] for k in known_slots), key=lambda b: rank[b[0]])
+    new_tail = list(tail)
+    for slot, blk in zip(known_slots, known_sorted):
+        new_tail[slot] = blk
+
+    new_blocks = head + new_tail
+    if [t for t, _ in blocks] == [t for t, _ in new_blocks]:
+        return False  # 이미 정규 순서 — 변경 없음
+
+    # 재구성: 섹션 경계는 빈 줄 하나, 파일 끝 개행 하나 (블록 내부는 보존)
+    def _chunk(block_lines: list[str]) -> str:
+        bl = list(block_lines)
+        while bl and not bl[-1].strip():
+            bl.pop()
+        return "\n".join(bl)
+
+    parts: list[str] = []
+    pre = list(preamble)
+    while pre and not pre[-1].strip():
+        pre.pop()
+    if pre:
+        parts.append("\n".join(pre))
+    parts.extend(_chunk(blk) for _, blk in new_blocks)
+
+    new_text = "\n\n".join(parts) + "\n"
+    report_path.write_text(new_text, encoding="utf-8", newline="\n")
+    return True
 
 
 def parse_review_verdict(review_path: Path) -> str:

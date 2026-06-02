@@ -15,6 +15,7 @@ from harness_core.io_state import (
     _latest_pre_report,
     detect_pre_report_state,
     detect_result_report_state,
+    normalize_result_section_order,
 )
 
 
@@ -430,3 +431,94 @@ def test_exercise_files_present_ignores_unknown_ext(tmp_path: Path) -> None:
     exercise_dir.mkdir()
     (exercise_dir / "ex1.xyz").write_text("", encoding="utf-8")
     assert _exercise_files_present(exercise_dir=exercise_dir) is False
+
+
+# ---------------------------------------------------------------------------
+# normalize_result_section_order
+# ---------------------------------------------------------------------------
+
+def test_normalize_moves_discussion_after_exercise(tmp_path: Path) -> None:
+    """14주차 사고 재현: 실험 결과 → 고찰 → 연습 문제 를 정규 순서로 바로잡는다."""
+    report = tmp_path / "14주차_결과보고서.md"
+    report.write_text(
+        "# 14주차 결과보고서\n\n"
+        "# 실험 결과\n\n## Ch 13\n데이터\n\n"
+        "# 고찰\n\n분석\n\n"
+        "# 연습 문제\n\n풀이\n",
+        encoding="utf-8",
+    )
+    assert normalize_result_section_order(report) is True
+    text = report.read_text(encoding="utf-8")
+    assert text.index("# 실험 결과") < text.index("# 연습 문제") < text.index("# 고찰")
+    # 섹션 내부 내용 보존
+    assert "## Ch 13" in text and "데이터" in text and "분석" in text and "풀이" in text
+
+
+def test_normalize_already_canonical_is_noop(tmp_path: Path) -> None:
+    report = tmp_path / "결과보고서.md"
+    content = (
+        "# 제목\n\n# 실험 결과\n\n데이터\n\n"
+        "# 연습 문제\n\n풀이\n\n# 고찰\n\n분석\n"
+    )
+    report.write_text(content, encoding="utf-8")
+    assert normalize_result_section_order(report) is False
+    assert report.read_text(encoding="utf-8") == content
+
+
+def test_normalize_is_idempotent(tmp_path: Path) -> None:
+    report = tmp_path / "결과보고서.md"
+    report.write_text(
+        "# 제목\n\n# 실험 결과\n데이터\n\n# 고찰\n분석\n\n# 연습 문제\n풀이\n",
+        encoding="utf-8",
+    )
+    assert normalize_result_section_order(report) is True
+    assert normalize_result_section_order(report) is False
+
+
+def test_normalize_no_exercise_section_noop(tmp_path: Path) -> None:
+    report = tmp_path / "결과보고서.md"
+    content = "# 제목\n\n# 실험 결과\n\n데이터\n\n# 고찰\n\n분석\n"
+    report.write_text(content, encoding="utf-8")
+    assert normalize_result_section_order(report) is False
+    assert report.read_text(encoding="utf-8") == content
+
+
+def test_normalize_keeps_title_first(tmp_path: Path) -> None:
+    report = tmp_path / "결과보고서.md"
+    report.write_text(
+        "# 15주차 결과보고서\n\n# 고찰\n분석\n\n# 실험 결과\n데이터\n",
+        encoding="utf-8",
+    )
+    assert normalize_result_section_order(report) is True
+    text = report.read_text(encoding="utf-8")
+    assert text.startswith("# 15주차 결과보고서")
+    assert text.index("# 실험 결과") < text.index("# 고찰")
+
+
+def test_normalize_keeps_unknown_section_in_place(tmp_path: Path) -> None:
+    """미지의 top-level 섹션(# 참고문헌)은 제자리, 알려진 섹션끼리만 정렬."""
+    report = tmp_path / "결과보고서.md"
+    report.write_text(
+        "# 제목\n\n# 실험 결과\n데이터\n\n# 고찰\n분석\n\n"
+        "# 참고문헌\n출처\n\n# 연습 문제\n풀이\n",
+        encoding="utf-8",
+    )
+    assert normalize_result_section_order(report) is True
+    text = report.read_text(encoding="utf-8")
+    assert text.index("# 실험 결과") < text.index("# 연습 문제") < text.index("# 고찰")
+    assert "# 참고문헌" in text and "출처" in text
+
+
+def test_normalize_ignores_headers_in_code_fence(tmp_path: Path) -> None:
+    """``` 코드펜스 안의 `# 고찰` 은 섹션 헤더로 보지 않는다."""
+    report = tmp_path / "결과보고서.md"
+    content = (
+        "# 제목\n\n# 실험 결과\n\n```\n# 고찰\n```\n데이터\n\n# 연습 문제\n\n풀이\n"
+    )
+    report.write_text(content, encoding="utf-8")
+    assert normalize_result_section_order(report) is False
+    assert report.read_text(encoding="utf-8") == content
+
+
+def test_normalize_missing_file(tmp_path: Path) -> None:
+    assert normalize_result_section_order(tmp_path / "없는파일.md") is False
