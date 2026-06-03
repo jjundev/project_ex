@@ -29,7 +29,7 @@ python harness.py --model-preset claude-default --reviewer-model gpt-5.5
 
 | alias | provider | model_id | reasoning |
 |---|---|---|---|
-| `opus` | claude | claude-opus-4-7 | — |
+| `opus` | claude | claude-opus-4-8 | — |
 | `sonnet` | claude | claude-sonnet-4-6 | — |
 | `gpt-5.5` | codex | gpt-5.5 | high |
 
