@@ -31,7 +31,7 @@ ROLE_ORDER = [
     "result-reviewer",
 ]
 
-MODEL_OPUS = "claude-opus-4-7"
+MODEL_OPUS = "claude-opus-4-8"
 MODEL_SONNET = "claude-sonnet-4-6"
 MODEL_GPT_DEFAULT = "gpt-5.5"
 
